@@ -22,8 +22,7 @@ jobs:
       with:
         path: |
           deps
-          build_debug
-          build_release
+          ~/.ccache
         key: ${{github.job}}-${{github.ref}}-${{github.sha}}
         restore-keys: |
           ${{github.job}}-${{github.ref}}-
@@ -32,36 +31,6 @@ jobs:
     - name: Build project
       shell: bash
       run: | 
-        bash build.sh init
-        bash build.sh debug
-        cd build_debug && make -j4
-
-  centos-x86_64:
-    runs-on: ubuntu-18.04
-    container: centos:7
-    steps:
-    - uses: actions/checkout@v2
-
-    - name: Install environment
-      shell: bash
-      run: yum install -y git wget rpm* cpio make glibc-devel glibc-headers binutils m4
-
-    - name: Cache build files
-      id: cache-dep
-      uses: actions/cache@v3
-      with:
-        path: |
-          deps
-          build_debug
-          build_release
-        key: ${{github.job}}-${{github.ref}}-${{github.sha}}
-        restore-keys: |
-          ${{github.job}}-${{github.ref}}-
-          ${{github.job}}-
-
-    - name: Build project
-      shell: bash
-      run: |
         bash build.sh init
         bash build.sh debug
         cd build_debug && make -j4
