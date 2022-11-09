@@ -23,11 +23,10 @@ jobs:
         path: |
           deps
           ~/.ccache
-        key: ${{github.job}}-${{github.ref}}-${{github.sha}}
+        key: ${{github.job}}-${{github.ref}}
         restore-keys: |
-          ${{github.job}}-${{github.ref}}-
+          ${{github.job}}-${{github.ref}}
           ${{github.job}}-
-  
     - name: Build project
       shell: bash
       run: | 
