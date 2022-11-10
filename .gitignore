@@ -98,6 +98,7 @@ compile_commands.json
 .cproject
 .cache
 .history/*
+final_2022.yaml
 ## Intellij files
 .idea
 cmake-build-debug
