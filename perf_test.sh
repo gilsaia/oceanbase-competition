@@ -6,7 +6,11 @@ sh server_run.sh release
 # prepare client
 
 # row num
-row_num=$1
+if [ ! "$1" ];then
+    row_num=100000
+else
+    row_num=$1
+fi
 
 # demo file
 demo_file=/root/demo.csv
@@ -37,29 +41,33 @@ create_table_cmd="create table lineitem_bulk ( \
    primary key (l_orderkey, I_linenumber));"
 
 # get small sample
+echo "Begin generate sample"
 head -$row_num $demo_file > $sample_file
 # exec client cmd
+echo "exec client cmd"
 echo "set global secure_file_priv=\"\";" | exec $ob_cmd
 echo $create_table_cmd | exec $ob_cmd 
 echo "set global ob_query_timeout=36000000000;" | exec $ob_cmd
 
 # run perf
-nohup sh script/utils/perf_run_nostop.sh &
-rm nohup.out
+echo "run perf"
+nohup sudo sh script/utils/perf_run_nostop.sh &
 
 # run load data
+echo "load data"
 echo "Load data infile \"${sample_file}\" into table lineitem_bulk fields terminated by \"|\";" | exec $ob_cmd
 
 # FlameGraph path
 frame_graph_path=$HOME/FlameGraph/
 
-PID=`ps -ef | grep perf | grep -v grep | awk '{print $2}'`
+PID=`ps -ef | grep perf | grep -v grep | grep -v perf_test.sh | awk '{print $2}'`
 if [ ${#PID} -eq 0 ]
 then
     echo "perf not running"
     exit -1
 fi
-kill $PID
+set +e
+sudo kill $PID
 echo "1: perf script"
 perf script -i perf.data &> perf.unfold
 echo "2: stackcollapse-perf.pl"
@@ -72,4 +80,5 @@ rm -rf perf.data* perf.folded perf.unfold
 echo "drop table lineitem_bulk;" | exec $ob_cmd
 
 # end server
+obd cluster stop final_2022
 obd cluster destroy final_2022

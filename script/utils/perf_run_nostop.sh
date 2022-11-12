@@ -7,4 +7,4 @@ then
     exit -1
 fi
 echo "perf record"
-perf record -F 99 -g -p $PID -- sleep 7200
+sudo perf record -F 99 -g -p $PID -- sleep 7200
