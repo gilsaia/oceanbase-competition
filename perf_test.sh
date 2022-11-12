@@ -7,7 +7,7 @@ sh server_run.sh release
 
 # row num
 if [ ! "$1" ];then
-    row_num=1000000
+    row_num=10000000
 else
     row_num=$1
 fi
@@ -57,17 +57,13 @@ nohup sudo sh script/utils/perf_run_nostop.sh &
 echo "load data"
 echo "Load data infile \"${sample_file}\" into table lineitem_bulk fields terminated by \"|\";" | exec $ob_cmd
 
+# end server
+obd cluster stop final_2022
+obd cluster destroy final_2022
+
 # FlameGraph path
 frame_graph_path=$HOME/FlameGraph/
 
-PID=`ps -ef | grep perf | grep -v grep | grep -v perf_test.sh | awk '{print $2}'`
-if [ ${#PID} -eq 0 ]
-then
-    echo "perf not running"
-    exit -1
-fi
-set +e
-sudo kill $PID
 sudo chmod 777 perf.data
 echo "1: perf script"
 perf script -i perf.data &> perf.unfold
@@ -76,10 +72,3 @@ ${frame_graph_path}stackcollapse-perf.pl perf.unfold &> perf.folded
 echo "3: flamegraph.pl"
 ${frame_graph_path}flamegraph.pl perf.folded > perf.svg
 rm -rf perf.data* perf.folded perf.unfold
-
-# drop table
-echo "drop table lineitem_bulk;" | exec $ob_cmd
-
-# end server
-obd cluster stop final_2022
-obd cluster destroy final_2022
