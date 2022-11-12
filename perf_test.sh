@@ -7,7 +7,7 @@ sh server_run.sh release
 
 # row num
 if [ ! "$1" ];then
-    row_num=100000
+    row_num=1000000
 else
     row_num=$1
 fi
@@ -68,6 +68,7 @@ then
 fi
 set +e
 sudo kill $PID
+sudo chmod 777 perf.data
 echo "1: perf script"
 perf script -i perf.data &> perf.unfold
 echo "2: stackcollapse-perf.pl"
