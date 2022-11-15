@@ -769,7 +769,7 @@ int ObLoadSSTableWriter::init_macro_block_writer(const ObTableSchema *table_sche
     ObMacroDataSeq data_seq;
     if (OB_FAIL(macro_block_writer_.open(data_store_desc_, data_seq))) {
       LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
-    }
+    }else if(FALSE_IT(macro_block_writer_.load_data_direct_demo())){}
   }
   return ret;
 }
@@ -929,6 +929,8 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
     LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
   } else if (OB_FAIL(schema_guard.get_table_schema(tenant_id, table_id, table_schema))) {
     LOG_WARN("fail to get table schema", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
+    LOG_WARN("fail to set compressor none", KR(ret));
   } else if (OB_ISNULL(table_schema)) {
     ret = OB_TABLE_NOT_EXIST;
     LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));

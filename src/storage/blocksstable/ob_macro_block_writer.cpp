@@ -81,6 +81,10 @@ void ObMicroBlockBufferHelper::reset()
   check_datum_row_.reset();
 }
 
+void ObMicroBlockBufferHelper::reset_micro_block_merge_verify_lebel(){
+  micro_block_merge_verify_level_=MICRO_BLOCK_MERGE_VERIFY_LEVEL::NONE;
+}
+
 int ObMicroBlockBufferHelper::compress_encrypt_micro_block(ObMicroBlockDesc &micro_block_desc)
 {
   int ret = OB_SUCCESS;
@@ -381,6 +385,10 @@ int ObMacroBlockWriter::open(
     }
   }
   return ret;
+}
+
+void ObMacroBlockWriter::load_data_direct_demo(){
+  micro_helper_.reset_micro_block_merge_verify_lebel();
 }
 
 int ObMacroBlockWriter::append_row(const ObDatumRow &row)
