@@ -31,6 +31,7 @@ namespace oceanbase
 namespace storage
 {
 
+constexpr size_t MAX_CONCURRENT_NUM = 4;
 struct ObExternalSortConstant
 {
   static const int64_t BUF_HEADER_LENGTH = sizeof(int64_t); //serialization::encoded_length_i64(0);
@@ -1094,6 +1095,15 @@ int ObExternalSortRound<T, Compare>::add_item(const T &item)
   return ret;
 }
 
+// TODO: async write
+// template<typename T, typename Compare>
+// int ObExternalSortRound<T, Compare>::async_build_fragment()
+// {
+//   int ret = common::OB_SUCCESS;
+
+
+//   return ret;
+// }
 template<typename T, typename Compare>
 int ObExternalSortRound<T, Compare>::build_fragment()
 {
@@ -1399,10 +1409,75 @@ int ObMemoryFragmentIterator<T>::get_next_item(const T *&item)
 }
 
 template<typename T, typename Compare>
+struct ObMemoryBuildFragmentTask
+{
+  typedef ObExternalSortRound<T, Compare> ExternalSortRound;
+  common::ObVector<T *> *item_list_;
+  ExternalSortRound *next_round_;
+  common::ObArenaAllocator *allocator_;
+  bool *handle_;
+  Compare *compare_;
+  ObMemoryBuildFragmentTask(common::ObVector<T *> *item_list, ExternalSortRound *next_round, 
+                            common::ObArenaAllocator *allocator, bool *handle, Compare *compare) :
+                          item_list_(item_list), next_round_(next_round), allocator_(allocator), 
+                          handle_(handle), compare_(compare) {}
+  ~ObMemoryBuildFragmentTask() {}
+};
+
+template<typename T, typename Compare>
+class ObMemorySortThreadPool : public ObSimpleThreadPool
+{
+public:
+  typedef ObMemoryBuildFragmentTask<T, Compare> MemoryBuildFragmentTask;
+  typedef ObExternalSortRound<T, Compare> ExternalSortRound;
+  void handle(void *build_fragment_task) 
+  {
+    int ret = common::OB_SUCCESS;
+    common::ObVector<T *> *item_list = static_cast<MemoryBuildFragmentTask *>(build_fragment_task)->item_list_;
+    ExternalSortRound *next_round =  static_cast<MemoryBuildFragmentTask *>(build_fragment_task)->next_round_; 
+    common::ObArenaAllocator *allocator = static_cast<MemoryBuildFragmentTask *>(build_fragment_task)->allocator_;
+    bool *handle = static_cast<MemoryBuildFragmentTask *>(build_fragment_task)->handle_; 
+    Compare *compare = static_cast<MemoryBuildFragmentTask *>(build_fragment_task)->compare_;
+    delete static_cast<MemoryBuildFragmentTask *>(build_fragment_task);
+
+    int64_t start = common::ObTimeUtility::current_time();
+    std::sort(item_list->begin(), item_list->end(), *compare);
+    if (OB_FAIL(compare->result_code_)) {
+      ret = compare->result_code_;
+    } else {
+      const int64_t sort_fragment_time = common::ObTimeUtility::current_time() - start;
+      STORAGE_LOG(INFO, "ObMemorySortRound", K(sort_fragment_time));
+    }
+
+    start = common::ObTimeUtility::current_time();
+    for (int64_t i = 0; OB_SUCC(ret) && i < item_list->size(); ++i) {
+      if (OB_FAIL(next_round->add_item(*(item_list->at(i))))) {
+        STORAGE_LOG(WARN, "fail to add item", K(ret));
+      }
+    }
+    if (OB_SUCC(ret)) {
+      // TODO: batch build fragment
+      if (OB_FAIL(next_round->build_fragment())) {
+        STORAGE_LOG(WARN, "fail to build fragment", K(ret));
+      } else {
+        const int64_t write_fragment_time = common::ObTimeUtility::current_time() - start;
+        STORAGE_LOG(INFO, "ObMemorySortRound", K(write_fragment_time));
+        item_list->reset();
+        allocator->reuse();
+      }
+    }
+    *handle = false;
+  }
+};
+
+
+template<typename T, typename Compare>
 class ObMemorySortRound
 {
 public:
   typedef ObExternalSortRound<T, Compare> ExternalSortRound;
+  typedef ObMemorySortThreadPool<T, Compare> MemorySortThreadPool;
+  typedef ObMemoryBuildFragmentTask<T, Compare> MemoryBuildFragmentTask;
   ObMemorySortRound();
   virtual ~ObMemorySortRound();
   int init(const int64_t mem_limit, const int64_t expire_timestamp,
@@ -1415,6 +1490,11 @@ public:
   bool has_data() const { return has_data_; }
   void reset();
   int transfer_final_sorted_fragment_iter(ExternalSortRound &dest_round);
+  int async_add_item(const T &item);
+  int async_build_fragment(int64_t cursor);
+  int async_finish();
+  int wait_all_build();
+
   TO_STRING_KV(K(is_inited_), K(is_in_memory_), K(has_data_), K(buf_mem_limit_),
       K(expire_timestamp_), KP(next_round_), KP(compare_), KP(iter_));
 private:
@@ -1428,21 +1508,35 @@ private:
   ExternalSortRound *next_round_;
   common::ObArenaAllocator allocator_;
   common::ObVector<T *> item_list_;
+  int64_t list_cursor_;
+  common::ObVector<T *> *item_lists_[MAX_CONCURRENT_NUM];
+  common::ObArenaAllocator *allocators_[MAX_CONCURRENT_NUM];
+  bool handling_[MAX_CONCURRENT_NUM];
   Compare *compare_;
   ObMemoryFragmentIterator<T> *iter_;
+  MemorySortThreadPool thread_pool_;
 };
 
 template<typename T, typename Compare>
 ObMemorySortRound<T, Compare>::ObMemorySortRound()
   : is_inited_(false), is_in_memory_(false), has_data_(false), buf_mem_limit_(0), expire_timestamp_(0),
     next_round_(NULL), allocator_(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE), item_list_(NULL, common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER),
-    compare_(NULL), iter_(NULL)
+    list_cursor_(0), compare_(NULL), iter_(NULL)
 {
+  for (int i = 0; i < MAX_CONCURRENT_NUM; i++) {
+    item_lists_[i] = new common::ObVector<T *>(NULL, common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER);
+    allocators_[i] = new common::ObArenaAllocator(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE);
+    handling_[i] = false;
+  }
 }
 
 template<typename T, typename Compare>
 ObMemorySortRound<T, Compare>::~ObMemorySortRound()
 {
+  for (int i = 0; i < MAX_CONCURRENT_NUM; i++) {
+    delete item_lists_[i];
+    delete allocators_[i];
+  }
 }
 
 template<typename T, typename Compare>
@@ -1470,6 +1564,7 @@ int ObMemorySortRound<T, Compare>::init(
     compare_ = compare;
     next_round_ = next_round;
     iter_ = NULL;
+    ret = thread_pool_.init(4, 16);
   }
   return ret;
 }
@@ -1504,6 +1599,48 @@ int ObMemorySortRound<T, Compare>::add_item(const T &item)
     if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
       STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
     } else if (OB_FAIL(item_list_.push_back(new_item))) {
+      STORAGE_LOG(WARN, "fail to push back new item", K(ret));
+    }
+  }
+  return ret;
+}
+
+template<typename T, typename Compare>
+int ObMemorySortRound<T, Compare>::async_add_item(const T &item)
+{
+  int ret = common::OB_SUCCESS;
+  const int64_t item_size = sizeof(T) + item.get_deep_copy_size();
+  char *buf = NULL;
+  T *new_item = NULL;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = common::OB_NOT_INIT;
+    STORAGE_LOG(WARN, "ObMemorySortRound has not been inited", K(ret));
+  } else if (ObExternalSortConstant::is_timeout(expire_timestamp_)) {
+    ret = common::OB_TIMEOUT;
+    STORAGE_LOG(WARN, "ObMemorySortRound timeout", K(ret), K(expire_timestamp_));
+  } else if (item_size > buf_mem_limit_) {
+    ret = common::OB_BUF_NOT_ENOUGH;
+    STORAGE_LOG(WARN, "invalid item size, must not larger than buf memory limit",
+        K(ret), K(item_size), K(buf_mem_limit_));
+  } else if (allocator_.used() + item_size > buf_mem_limit_) {
+    if (OB_FAIL(async_build_fragment(list_cursor_++))) {
+      STORAGE_LOG(WARN, "fail to build fragment", K(ret));
+    }
+    list_cursor_ = list_cursor_ / MAX_CONCURRENT_NUM;
+    while (handling_[list_cursor_]) {
+      usleep(100);
+    }
+  } else if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
+    ret = common::OB_ALLOCATE_MEMORY_FAILED;
+    STORAGE_LOG(WARN, "fail to allocate memory", K(ret), K(item_size));
+  } else if (OB_ISNULL(new_item = new (buf) T())) {
+    ret = common::OB_ALLOCATE_MEMORY_FAILED;
+    STORAGE_LOG(WARN, "fail to placement new item", K(ret));
+  } else {
+    int64_t buf_pos = sizeof(T);
+    if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
+      STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
+    } else if (OB_FAIL(item_lists_[list_cursor_]->push_back(new_item))) {
       STORAGE_LOG(WARN, "fail to push back new item", K(ret));
     }
   }
@@ -1549,6 +1686,25 @@ int ObMemorySortRound<T, Compare>::build_fragment()
 }
 
 template<typename T, typename Compare>
+int ObMemorySortRound<T, Compare>::async_build_fragment(int64_t cursor)
+{
+  int ret = common::OB_SUCCESS;
+  handling_[cursor] = true;
+  common::ObVector<T *> *item_list = item_lists_[cursor];
+  common::ObArenaAllocator *allocator = allocators_[cursor];
+  ExternalSortRound *next_round = next_round_;
+  bool *handle = &handling_[cursor];
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = common::OB_NOT_INIT;
+    STORAGE_LOG(WARN, "ObMemorySortRound has not been inited", K(ret));
+  } else if (item_list_.size() > 0) {
+    MemoryBuildFragmentTask *task = new MemoryBuildFragmentTask(item_list, next_round, allocator, handle, compare_);
+    thread_pool_.push((void *)task);
+  }
+  return ret;
+}
+
+template<typename T, typename Compare>
 int ObMemorySortRound<T, Compare>::finish()
 {
   int ret = common::OB_SUCCESS;
@@ -1580,6 +1736,51 @@ int ObMemorySortRound<T, Compare>::finish()
 }
 
 template<typename T, typename Compare>
+int ObMemorySortRound<T, Compare>::wait_all_build() {
+  int ret = common::OB_SUCCESS;
+  for (int i = 0; i < MAX_CONCURRENT_NUM; i++) {
+    while(handling_[i]) {
+      usleep(100);
+    }
+  }
+  return ret;
+}
+
+template<typename T, typename Compare>
+int ObMemorySortRound<T, Compare>::async_finish()
+{
+  int ret = common::OB_SUCCESS;
+  common::ObVector<T *> &item_list = *item_lists_[list_cursor_];
+  bool handling = handling_[list_cursor_];
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = common::OB_NOT_INIT;
+    STORAGE_LOG(WARN, "ObMemorySortRound has not been inited", K(ret));
+  } else if (0 == item_list.size()) {
+    has_data_ = false;
+  } else if (!handling && 0 == next_round_->get_fragment_count()) {
+    is_in_memory_ = true;
+    has_data_ = true;
+    std::sort(item_list.begin(), item_list.end(), *compare_);
+    if (OB_FAIL(compare_->result_code_)) {
+      STORAGE_LOG(WARN, "fail to sort item list", K(ret));
+    }
+  } else if(!handling){
+    is_in_memory_ = false;
+    has_data_ = true;
+    if (OB_FAIL(build_fragment())) {
+      STORAGE_LOG(WARN, "fail to build fragment", K(ret));
+    } else if (OB_FAIL(next_round_->finish_write())) {
+      STORAGE_LOG(WARN, "fail to do next round finish write", K(ret));
+    } else {
+      item_lists_[list_cursor_]->reset();
+      allocators_[list_cursor_]->reset();
+    }
+  }
+  wait_all_build();
+  return ret;
+}
+
+template<typename T, typename Compare>
 int ObMemorySortRound<T, Compare>::build_iterator()
 {
   int ret = common::OB_SUCCESS;
@@ -1598,6 +1799,7 @@ int ObMemorySortRound<T, Compare>::build_iterator()
   }
   return ret;
 }
+
 
 template<typename T, typename Compare>
 int ObMemorySortRound<T, Compare>::get_next_item(const T *&item)
@@ -1758,7 +1960,7 @@ int ObExternalSort<T, Compare>::add_item(const T &item)
   if (OB_UNLIKELY(!is_inited_)) {
     ret = common::OB_NOT_INIT;
     STORAGE_LOG(WARN, "ObExternalSort has not been inited", K(ret));
-  } else if (OB_FAIL(memory_sort_round_.add_item(item))) {
+  } else if (OB_FAIL(memory_sort_round_.async_add_item(item))) {
     STORAGE_LOG(WARN, "fail to add item in memory sort round", K(ret));
   }
   return ret;
