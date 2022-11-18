@@ -181,7 +181,7 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
   return ret;
 }
 
-int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
+int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, ObNewRow *&row)
 {
   int ret = OB_SUCCESS;
   row = nullptr;
@@ -213,7 +213,12 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
           obj.set_collation_type(collation_type_);
         }
       }
-      row = &row_;
+      row = new ObNewRow();
+      int64_t deep_copy_size = row_.get_deep_copy_size();
+      char *buf = static_cast<char*>(allocator_.alloc(deep_copy_size));
+      int64_t pos = 0;
+      row->deep_copy(row_, buf, deep_copy_size, pos);
+      // row = &row_;
     }
   }
   return ret;
@@ -647,6 +652,20 @@ int ObLoadExternalSort::get_next_row(const ObLoadDatumRow *&datum_row)
   return ret;
 }
 
+int ObLoadExternalSort::transfer_final_sorted(ObLoadExternalSort &merge_sorter)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(external_sort_.transfer_final_sorted_fragment_iter(merge_sorter.external_sort_))) {
+    LOG_WARN("fail to transfer final sorted", KR(ret));
+  }
+  return ret;
+}
+
+bool ObLoadExternalSort::finish() 
+{
+  return is_finish_;
+}
+
 /**
  * ObLoadSSTableWriter
  */
@@ -914,6 +933,33 @@ int ObLoadDataDirectDemo::execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   return ret;
 }
 
+int ObLoadDataDirectDemo::parallel_row_caster_init(ObLoadDataStmt &load_stmt, 
+                                                    const ObTableSchema *table_schema)
+{
+  int ret = OB_SUCCESS;
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
+    load_stmt.get_field_or_var_list();
+  for (auto i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+    if (OB_FAIL(parallel_row_caster_[i].init(table_schema, field_or_var_list))) {
+      LOG_WARN("fail to init row caster", KR(ret));
+      return ret;
+    }
+  }
+  return ret;
+}
+
+int ObLoadDataDirectDemo::parallel_external_sort_init(const ObTableSchema *table_schema)
+{
+  int ret = OB_SUCCESS;
+  for (auto i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+    if (OB_FAIL(parallel_external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / PARALLEL_LOAD_NUM, FILE_BUFFER_SIZE))) {
+      LOG_WARN("fail to init row caster", KR(ret));
+      return ret;
+    }
+  }
+  return ret;
+}
+
 int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
 {
   int ret = OB_SUCCESS;
@@ -950,16 +996,44 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
     LOG_WARN("fail to create buffer", KR(ret));
   }
   // init row_caster_
-  else if (OB_FAIL(row_caster_.init(table_schema, field_or_var_list))) {
-    LOG_WARN("fail to init row caster", KR(ret));
+  // else if (OB_FAIL(row_caster_.init(table_schema, field_or_var_list))) {
+  //   LOG_WARN("fail to init row caster", KR(ret));
+  // }
+  // init parallel_row_caster_
+  else if (OB_FAIL(parallel_row_caster_init(load_stmt, table_schema))) {
+    LOG_WARN("fail to init parallel row caster", KR(ret));
   }
   // init external_sort_
-  else if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE))) {
-    LOG_WARN("fail to init row caster", KR(ret));
+  // else if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE))) {
+  //   LOG_WARN("fail to init row caster", KR(ret));
+  // }
+  // init parallel_external_sort_
+  else if (OB_FAIL(parallel_external_sort_init(table_schema))) {
+    LOG_WARN("fail to init parallel external sort", KR(ret));
+  }
+  // init combine_external_sort_
+  else if (OB_FAIL(combine_external_sort_.init(table_schema, MEM_BUFFER_SIZE / PARALLEL_LOAD_NUM, FILE_BUFFER_SIZE))) {
+    LOG_WARN("fail to init combine  external sort", KR(ret));
   }
   // init sstable_writer_
   else if (OB_FAIL(sstable_writer_.init(table_schema))) {
     LOG_WARN("fail to init sstable writer", KR(ret));
+  }
+  // init pool_
+  else if (OB_FAIL(pool_.inner_init(8, 8, parallel_row_caster_, parallel_external_sort_))) {
+    LOG_WARN("fail to init thread pool", KR(ret));
+  }
+  return ret;
+}
+
+int ObLoadDataDirectDemo::combine_sort()
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+    if (OB_FAIL(parallel_external_sort_[i].transfer_final_sorted(combine_external_sort_))) {
+      LOG_WARN("fail to cast row", KR(ret));
+      return ret;
+    }
   }
   return ret;
 }
@@ -967,7 +1041,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
 int ObLoadDataDirectDemo::do_load()
 {
   int ret = OB_SUCCESS;
-  const ObNewRow *new_row = nullptr;
+  ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
   while (OB_SUCC(ret)) {
     if (OB_FAIL(buffer_.squash())) {
@@ -995,21 +1069,38 @@ int ObLoadDataDirectDemo::do_load()
             ret = OB_SUCCESS;
             break;
           }
-        } else if (OB_FAIL(row_caster_.get_casted_row(*new_row, datum_row))) {
-          LOG_WARN("fail to cast row", KR(ret));
-        } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {
-          LOG_WARN("fail to append row", KR(ret));
+        } // else if (OB_FAIL(row_caster_.get_casted_row(*new_row, datum_row))) {
+          // LOG_WARN("fail to cast row", KR(ret));
+        // } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {
+        //  LOG_WARN("fail to append row", KR(ret));
+        // }
+        int idx = 0;
+        while (!parallel_external_sort_[idx].finish()) {
+          idx = (idx + 1) % PARALLEL_LOAD_NUM;
         }
+        task[idx] = {idx, new_row};
+        parallel_external_sort_[idx].set_finish(false);
+        pool_.push((void*)(task + idx));
       }
     }
   }
+  // wait thread pool all finish
+  pool_.destroy();
+
+  // combine sort
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_.close())) {
+    if (OB_FAIL(combine_sort())) {
+      LOG_WARN("fail to combine sort", KR(ret));
+    }
+  }
+
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(combine_external_sort_.close())) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
   while (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_.get_next_row(datum_row))) {
+    if (OB_FAIL(combine_external_sort_.get_next_row(datum_row))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
       } else {

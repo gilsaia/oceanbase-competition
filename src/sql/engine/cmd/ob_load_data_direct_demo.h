@@ -1,12 +1,14 @@
 #pragma once
 
 #include "lib/file/ob_file.h"
+#include "lib/thread/ob_simple_thread_pool.h"
 #include "lib/timezone/ob_timezone_info.h"
 #include "sql/engine/cmd/ob_load_data_impl.h"
 #include "sql/engine/cmd/ob_load_data_parser.h"
 #include "storage/blocksstable/ob_index_block_builder.h"
 #include "storage/ob_parallel_external_sort.h"
 #include "storage/tx_storage/ob_ls_handle.h"
+#include <atomic>
 
 namespace oceanbase
 {
@@ -59,7 +61,7 @@ public:
   void reset();
   int init(const ObDataInFileStruct &format, int64_t column_count,
            common::ObCollationType collation_type);
-  int get_next_row(ObLoadDataBuffer &buffer, const common::ObNewRow *&row);
+  int get_next_row(ObLoadDataBuffer &buffer, common::ObNewRow *&row);
 private:
   struct UnusedRowHandler
   {
@@ -150,14 +152,21 @@ public:
            int64_t file_buf_size);
   int append_row(const ObLoadDatumRow &datum_row);
   int close();
+  void set_finish(bool flag) { is_finish_ = flag; }
   int get_next_row(const ObLoadDatumRow *&datum_row);
+  int transfer_final_sorted(ObLoadExternalSort &merge_sorter);
+  bool finish();
 private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
   ObLoadDatumRowCompare compare_;
+public:
   storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
+private:
   bool is_closed_;
   bool is_inited_;
+  std::atomic<bool> is_finish_{true};
+  
 };
 
 class ObLoadSSTableWriter
@@ -193,19 +202,58 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
 {
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
+  static const uint32_t PARALLEL_LOAD_NUM = 8;
 public:
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
   int execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt) override;
 private:
   int inner_init(ObLoadDataStmt &load_stmt);
+  int parallel_row_caster_init(ObLoadDataStmt &load_stmt, const ObTableSchema *table_schema);
+  int parallel_external_sort_init(const ObTableSchema *table_schema);
+  int combine_sort();
   int do_load();
 private:
+  struct DoOneRowTask {
+    int idx;
+    const ObNewRow *new_row;
+  };
+  class : public ObSimpleThreadPool {
+    void handle(void *task) {
+      DoOneRowTask cur_task = *(DoOneRowTask *)task;
+      int idx = cur_task.idx;
+      const ObNewRow *new_row = cur_task.new_row;
+      int ret = OB_SUCCESS;
+      const ObLoadDatumRow *datum_row = nullptr;
+      if (OB_FAIL(row_casters_[idx].get_casted_row(*new_row, datum_row))) {
+        LOG_WARN("fail to cast row", KR(ret));
+      } else if (OB_FAIL(external_sorts_[idx].append_row(*datum_row))) {
+        LOG_WARN("fail to append row", KR(ret));
+      }
+      delete new_row;
+      external_sorts_[idx].set_finish(true);
+    }
+  public:
+    int inner_init(const int64_t thread_num, const int64_t task_num_limit, 
+                    ObLoadRowCaster* row_casters, ObLoadExternalSort* external_sorts) {
+      row_casters_ = row_casters;
+      external_sorts_ = external_sorts; 
+      int ret = OB_SUCCESS;
+      init(thread_num, task_num_limit);
+      return ret;
+    }
+    ObLoadRowCaster* row_casters_;
+    ObLoadExternalSort* external_sorts_;
+  } pool_;
   ObLoadCSVPaser csv_parser_;
   ObLoadSequentialFileReader file_reader_;
   ObLoadDataBuffer buffer_;
-  ObLoadRowCaster row_caster_;
-  ObLoadExternalSort external_sort_;
+  //ObLoadRowCaster row_caster_;
+  ObLoadRowCaster parallel_row_caster_[PARALLEL_LOAD_NUM];
+  //ObLoadExternalSort external_sort_;
+  ObLoadExternalSort parallel_external_sort_[PARALLEL_LOAD_NUM];
+  ObLoadExternalSort combine_external_sort_;
+  DoOneRowTask task[PARALLEL_LOAD_NUM];
   ObLoadSSTableWriter sstable_writer_;
 };
 
