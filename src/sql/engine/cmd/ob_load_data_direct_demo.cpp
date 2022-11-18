@@ -1030,7 +1030,9 @@ int ObLoadDataDirectDemo::combine_sort()
 {
   int ret = OB_SUCCESS;
   for (int64_t i = 0; i < PARALLEL_LOAD_NUM; ++i) {
-    if (OB_FAIL(parallel_external_sort_[i].transfer_final_sorted(combine_external_sort_))) {
+    if (OB_FAIL(parallel_external_sort_[i].close())) {
+      LOG_WARN("fail to close parallel external sort", KR(ret));
+    } else if (OB_FAIL(parallel_external_sort_[i].transfer_final_sorted(combine_external_sort_))) {
       LOG_WARN("fail to cast row", KR(ret));
       return ret;
     }

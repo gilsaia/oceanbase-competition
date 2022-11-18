@@ -335,4 +335,4 @@ deps/3rd
 test/tmp
 test/var
 
-sample.csv
+sample*.csv
