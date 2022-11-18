@@ -304,6 +304,7 @@ int ObFragmentWriterV2<T>::flush_buffer()
     STORAGE_LOG(WARN, "fail to serialize header", K(ret));
   } else {
     blocksstable::ObTmpFileIOInfo io_info;
+    
     io_info.fd_ = fd_;
     io_info.dir_id_ = dir_id_;
     io_info.size_ = buf_size_;
@@ -311,6 +312,7 @@ int ObFragmentWriterV2<T>::flush_buffer()
     io_info.buf_ = buf_;
     io_info.io_desc_.set_category(common::ObIOCategory::SYS_IO);
     io_info.io_desc_.set_wait_event(ObWaitEventIds::DB_FILE_INDEX_BUILD_WRITE);
+    STORAGE_LOG(WARN, "io info", K(io_info));
     if (OB_FAIL(FILE_MANAGER_INSTANCE_V2.aio_write(io_info, file_io_handle_))) {
       STORAGE_LOG(WARN, "fail to do aio write macro file", K(ret), K(io_info));
     } else {
@@ -2023,6 +2025,9 @@ int ObParallelExternalSortRound<T, Compare>::add_item(const T &item, const int64
       expire_timestamp_, tenant_id_, dir_ids_[cursor]))) {
     STORAGE_LOG(WARN, "fail to open writer", K(ret), K(tenant_id_), K(dir_ids_[cursor]));
   } else {
+    if (!is_writer_opened_[cursor]) {
+      STORAGE_LOG(WARN, "success to open writer", K(tenant_id_), K(dir_ids_[cursor]));
+    }
     is_writer_opened_[cursor] = true;
     if (OB_FAIL(writers_[cursor].write_item(item))) {
       STORAGE_LOG(WARN, "fail to write item", K(ret));
@@ -2359,18 +2364,20 @@ int ObParallelMemorySortRound<T, Compare>::finish()
     STORAGE_LOG(WARN, "ObMemorySortRound has not been inited", K(ret));
   }
   is_in_memory_ = false;
-  if (item_lists_[cursor_]->size() != 0) {
+  if (item_lists_[cursor_]->size() != 0 && latchs_[cursor_].trylock()) {
     has_data_ = true;
+    latchs_[cursor_].unlock();
     if (OB_FAIL(build_fragment())) {
       STORAGE_LOG(WARN, "fail to build fragment", K(ret));
-    } else {
-      for (int i = 0; i < CONCURRENT_NUM; i++) {
-        while (!latchs_[i].trylock()) {
-          usleep(100);
-        }
-        latchs_[i].unlock();
-      }
     }
+    
+  }
+  for (int i = 0; i < CONCURRENT_NUM; i++) {
+    STORAGE_LOG(INFO, "wait for async finish", K(i));
+    while (!latchs_[i].trylock()) {
+      usleep(100);
+    }
+    latchs_[i].unlock();
   }
 
   return ret;
