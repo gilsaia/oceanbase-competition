@@ -218,7 +218,7 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, ObNewRow *&row)
       char *buf = static_cast<char*>(allocator_.alloc(deep_copy_size));
       int64_t pos = 0;
       row->deep_copy(row_, buf, deep_copy_size, pos);
-      // row = &row_;
+      //row = &row_;
     }
   }
   return ret;
@@ -620,7 +620,7 @@ int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
   return ret;
 }
 
-int ObLoadExternalSort::close()
+int ObLoadExternalSort::close(bool final_merge)
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
@@ -629,7 +629,7 @@ int ObLoadExternalSort::close()
   } else if (OB_UNLIKELY(is_closed_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sort_.do_sort(true))) {
+  } else if (OB_FAIL(external_sort_.do_sort(final_merge))) {
     LOG_WARN("fail to do sort", KR(ret));
   } else {
     is_closed_ = true;
@@ -914,8 +914,12 @@ int ObLoadSSTableWriter::close()
  * ObLoadDataDirectDemo
  */
 
-ObLoadDataDirectDemo::ObLoadDataDirectDemo()
+ObLoadDataDirectDemo::ObLoadDataDirectDemo() 
 {
+  pool_.inner_init(this);
+  pool_.set_thread_count(PARALLEL_LOAD_NUM);
+  pool_.set_run_wrapper(MTL_CTX());
+  pool_.start();
 }
 
 ObLoadDataDirectDemo::~ObLoadDataDirectDemo()
@@ -1016,13 +1020,13 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
     LOG_WARN("fail to init combine  external sort", KR(ret));
   }
   // init sstable_writer_
-  else if (OB_FAIL(sstable_writer_.init(table_schema))) {
+   else if (OB_FAIL(sstable_writer_.init(table_schema))) {
     LOG_WARN("fail to init sstable writer", KR(ret));
   }
   // init pool_
-  else if (OB_FAIL(pool_.inner_init(8, 8, parallel_row_caster_, parallel_external_sort_))) {
-    LOG_WARN("fail to init thread pool", KR(ret));
-  }
+  // else if (OB_FAIL(pool_.inner_init(PARALLEL_LOAD_NUM, PARALLEL_LOAD_NUM * 20, parallel_row_caster_, parallel_external_sort_))) {
+  //   LOG_WARN("fail to init thread pool", KR(ret));
+  // }
   return ret;
 }
 
@@ -1030,7 +1034,7 @@ int ObLoadDataDirectDemo::combine_sort()
 {
   int ret = OB_SUCCESS;
   for (int64_t i = 0; i < PARALLEL_LOAD_NUM; ++i) {
-    if (OB_FAIL(parallel_external_sort_[i].close())) {
+    if (OB_FAIL(parallel_external_sort_[i].close(false))) {
       LOG_WARN("fail to close parallel external sort", KR(ret));
     } else if (OB_FAIL(parallel_external_sort_[i].transfer_final_sorted(combine_external_sort_))) {
       LOG_WARN("fail to cast row", KR(ret));
@@ -1077,17 +1081,20 @@ int ObLoadDataDirectDemo::do_load()
         //  LOG_WARN("fail to append row", KR(ret));
         // }
         int idx = 0;
-        while (!parallel_external_sort_[idx].finish()) {
+        while (is_ready[idx]) {
           idx = (idx + 1) % PARALLEL_LOAD_NUM;
         }
-        task[idx] = {idx, new_row};
-        parallel_external_sort_[idx].set_finish(false);
-        pool_.push((void*)(task + idx));
+        parallel_new_row[idx] = new_row;
+        is_ready[idx] ^= 1;
       }
     }
   }
   // wait thread pool all finish
-  pool_.destroy();
+  for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+    while (is_ready[i]);
+  }
+  pool_.stop();
+  pool_.wait();
 
   // combine sort
   if (OB_SUCC(ret)) {
@@ -1097,7 +1104,7 @@ int ObLoadDataDirectDemo::do_load()
   }
 
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(combine_external_sort_.close())) {
+    if (OB_FAIL(combine_external_sort_.close(true))) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }

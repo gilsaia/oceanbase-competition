@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lib/file/ob_file.h"
-#include "lib/thread/ob_simple_thread_pool.h"
+#include "share/ob_thread_pool.h"
 #include "lib/timezone/ob_timezone_info.h"
 #include "sql/engine/cmd/ob_load_data_impl.h"
 #include "sql/engine/cmd/ob_load_data_parser.h"
@@ -151,7 +151,7 @@ public:
   int init(const share::schema::ObTableSchema *table_schema, int64_t mem_size,
            int64_t file_buf_size);
   int append_row(const ObLoadDatumRow &datum_row);
-  int close();
+  int close(bool final_merge = true);
   void set_finish(bool flag) { is_finish_ = flag; }
   int get_next_row(const ObLoadDatumRow *&datum_row);
   int transfer_final_sorted(ObLoadExternalSort &merge_sorter);
@@ -202,7 +202,7 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
 {
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
-  static const uint32_t PARALLEL_LOAD_NUM = 1;
+  static const uint32_t PARALLEL_LOAD_NUM = 4;
 public:
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
@@ -213,37 +213,30 @@ private:
   int parallel_external_sort_init(const ObTableSchema *table_schema);
   int combine_sort();
   int do_load();
-private:
-  struct DoOneRowTask {
-    int idx;
-    const ObNewRow *new_row;
-  };
-  class : public ObSimpleThreadPool {
-    void handle(void *task) {
-      DoOneRowTask cur_task = *(DoOneRowTask *)task;
-      int idx = cur_task.idx;
-      const ObNewRow *new_row = cur_task.new_row;
-      int ret = OB_SUCCESS;
-      const ObLoadDatumRow *datum_row = nullptr;
-      if (OB_FAIL(row_casters_[idx].get_casted_row(*new_row, datum_row))) {
-        LOG_WARN("fail to cast row", KR(ret));
-      } else if (OB_FAIL(external_sorts_[idx].append_row(*datum_row))) {
-        LOG_WARN("fail to append row", KR(ret));
-      }
-      delete new_row;
-      external_sorts_[idx].set_finish(true);
-    }
+public:
+  class LoadThreadPool : public ObThreadPool {
   public:
-    int inner_init(const int64_t thread_num, const int64_t task_num_limit, 
-                    ObLoadRowCaster* row_casters, ObLoadExternalSort* external_sorts) {
-      row_casters_ = row_casters;
-      external_sorts_ = external_sorts; 
+    void run(int64_t idx) final
+    {
       int ret = OB_SUCCESS;
-      init(thread_num, task_num_limit);
-      return ret;
+      while (!ATOMIC_LOAD(&has_set_stop())) {
+        if (oldd_->is_ready[idx]) {
+          const ObLoadDatumRow *datum_row = nullptr;
+          ObNewRow *new_row = oldd_->parallel_new_row[idx];
+          if (OB_FAIL(oldd_->parallel_row_caster_[idx].get_casted_row(*new_row, datum_row))) {
+            LOG_WARN("fail to cast row", KR(ret));
+          } else if (OB_FAIL(oldd_->parallel_external_sort_[idx].append_row(*datum_row))) {
+            LOG_WARN("fail to append row", KR(ret));
+          }
+          delete new_row;
+          oldd_->parallel_external_sort_[idx].set_finish(true);
+          oldd_->is_ready[idx] ^= 1;
+        } 
+      }
     }
-    ObLoadRowCaster* row_casters_;
-    ObLoadExternalSort* external_sorts_;
+
+    void inner_init(ObLoadDataDirectDemo* oldd) { oldd_ = oldd; }
+    ObLoadDataDirectDemo* oldd_;
   } pool_;
   ObLoadCSVPaser csv_parser_;
   ObLoadSequentialFileReader file_reader_;
@@ -252,9 +245,12 @@ private:
   ObLoadRowCaster parallel_row_caster_[PARALLEL_LOAD_NUM];
   //ObLoadExternalSort external_sort_;
   ObLoadExternalSort parallel_external_sort_[PARALLEL_LOAD_NUM];
+  int is_ready[PARALLEL_LOAD_NUM] = {0};
+  ObNewRow *parallel_new_row[PARALLEL_LOAD_NUM];
   ObLoadExternalSort combine_external_sort_;
-  DoOneRowTask task[PARALLEL_LOAD_NUM];
   ObLoadSSTableWriter sstable_writer_;
+
+  friend class LoadThreadPool;
 };
 
 } // namespace sql
