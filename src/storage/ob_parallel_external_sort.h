@@ -25,6 +25,8 @@
 #include "blocksstable/ob_block_sstable_struct.h"
 #include "blocksstable/ob_tmp_file.h"
 #include "share/config/ob_server_config.h"
+#include "lib/stat/ob_session_stat.h"
+#include "src/observer/omt/ob_tenant.h"
 
 
 namespace oceanbase
@@ -1952,7 +1954,7 @@ private:
   int64_t expire_timestamp_;
   Compare *compare_;
   FragmentMerger merger_;
-  common::ObArenaAllocator *allocators_[CONCURRENT_NUM];
+  common::ObArenaAllocator allocator_;
   uint64_t tenant_id_;
   int64_t dir_ids_[CONCURRENT_NUM];
   bool is_writer_opened_[CONCURRENT_NUM];
@@ -1962,11 +1964,10 @@ private:
 template<typename T, typename Compare>
 ObParallelExternalSortRound<T, Compare>::ObParallelExternalSortRound()
   : is_inited_(false), file_buf_size_(0), iters_(),
-    expire_timestamp_(0), compare_(NULL), merger_(),
+    expire_timestamp_(0), compare_(NULL), merger_(), allocator_(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE),
     tenant_id_(common::OB_INVALID_ID)
 {
   for (int i = 0; i < CONCURRENT_NUM; i++) {
-    allocators_[i] = new common::ObArenaAllocator(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE);
     dir_ids_[i] = -1;
     is_writer_opened_[i] = false;
   }
@@ -1975,9 +1976,6 @@ ObParallelExternalSortRound<T, Compare>::ObParallelExternalSortRound()
 template<typename T, typename Compare>
 ObParallelExternalSortRound<T, Compare>::~ObParallelExternalSortRound()
 {
-  for (int i = 0; i < CONCURRENT_NUM; i++) {
-    delete allocators_[i];
-  }
 }
 
 template<typename T, typename Compare>
@@ -2039,13 +2037,14 @@ int ObParallelExternalSortRound<T, Compare>::add_item(const T &item, const int64
 template<typename T, typename Compare>
 int ObParallelExternalSortRound<T, Compare>::build_fragment(const int64_t cursor)
 {
+  LOG_INFO("parallel external sort enter", K(cursor));
   int ret = common::OB_SUCCESS;
   void *buf = NULL;
   FragmentReader *reader = NULL;
   if (OB_UNLIKELY(!is_inited_)) {
     ret = common::OB_NOT_INIT;
     STORAGE_LOG(WARN, "ObExternalSortRound has not been inited", K(ret));
-  } else if (OB_ISNULL(buf = allocators_[cursor]->alloc(sizeof(FragmentReader)))) {
+  } else if (OB_ISNULL(buf = allocator_.alloc(sizeof(FragmentReader)))) {
     ret = common::OB_ALLOCATE_MEMORY_FAILED;
     STORAGE_LOG(WARN, "fail to allocate memory", K(ret));
   } else if (OB_ISNULL(reader = new (buf) FragmentReader())) {
@@ -2144,78 +2143,148 @@ int ObParallelExternalSortRound<T, Compare>::clean_up()
   expire_timestamp_ = 0;
   compare_ = NULL;
   merger_.reset();
-  for (int i = 0; i < CONCURRENT_NUM; ++i) {
-    allocators_[i]->reset();
-  }
+  allocator_.reset();
   return ret;
 }
 
-template<typename T, typename Compare>
-struct ObMemoryBuildFragmentTask
-{
-  typedef ObParallelExternalSortRound<T, Compare> ParallelExternalSortRound;
-  int64_t cursor_;
-  common::ObVector<T *> *item_list_;
-  ParallelExternalSortRound *final_round_;
-  common::ObArenaAllocator *allocator_;
-  Compare *compare_;
-  obutil::Mutex *latch_;
-  ObMemoryBuildFragmentTask(int64_t cursor, common::ObVector<T *> *item_list, ParallelExternalSortRound *final_round, 
-                            common::ObArenaAllocator *allocator, obutil::Mutex *latch, Compare *compare) :
-                          cursor_(cursor), item_list_(item_list), 
-                          final_round_(final_round), allocator_(allocator), 
-                          compare_(compare), latch_(latch) {}
-  ~ObMemoryBuildFragmentTask() {}
-};
+// template<typename T, typename Compare>
+// struct ObMemoryBuildFragmentTask
+// {
+//   typedef ObParallelExternalSortRound<T, Compare> ParallelExternalSortRound;
+//   int64_t cursor_;
+//   common::ObVector<T *> *item_list_;
+//   ParallelExternalSortRound *final_round_;
+//   common::ObArenaAllocator *allocator_;
+//   Compare *compare_;
+//   obutil::Mutex *latch_;
+//   ObMemoryBuildFragmentTask(int64_t cursor, common::ObVector<T *> *item_list, ParallelExternalSortRound *final_round, 
+//                             common::ObArenaAllocator *allocator, obutil::Mutex *latch, Compare *compare) :
+//                           cursor_(cursor), item_list_(item_list), 
+//                           final_round_(final_round), allocator_(allocator), 
+//                           compare_(compare), latch_(latch) {}
+//   ~ObMemoryBuildFragmentTask() {}
+// };
+
+// template<typename T, typename Compare>
+// class ObMemorySortThreadPool : public ObSimpleThreadPool
+// {
+// public:
+//   typedef ObMemoryBuildFragmentTask<T, Compare> MemoryBuildFragmentTask;
+//   typedef ObParallelExternalSortRound<T, Compare> ParallelExternalSortRound;
+//   void handle(void *build_fragment_task) 
+//   {
+//     LOG_INFO("thread begin handle build fragment task");
+//     int ret = common::OB_SUCCESS;
+//     MemoryBuildFragmentTask *mbf = static_cast<MemoryBuildFragmentTask *>(build_fragment_task); 
+//     int64_t cursor = mbf->cursor_;
+//     common::ObVector<T *> *item_list = mbf->item_list_;
+//     ParallelExternalSortRound *final_round = mbf->final_round_;
+//     common::ObArenaAllocator *allocator = mbf->allocator_;
+//     Compare *compare = mbf->compare_;
+//     obutil::Mutex *latch = mbf->latch_;
+//     delete static_cast<MemoryBuildFragmentTask *>(build_fragment_task);
+
+//     int64_t start = common::ObTimeUtility::current_time();
+//     std::sort(item_list->begin(), item_list->end(), *compare);
+//     if (OB_FAIL(compare->result_code_)) {
+//       ret = compare->result_code_;
+//     } else {
+//       const int64_t sort_fragment_time = common::ObTimeUtility::current_time() - start;
+//       STORAGE_LOG(INFO, "ObMemorySortRound", K(sort_fragment_time));
+//     }
+
+//     start = common::ObTimeUtility::current_time();
+//     for (int64_t i = 0; OB_SUCC(ret) && i < item_list->size(); ++i) {
+//       if (OB_FAIL(final_round->add_item(*(item_list->at(i)), cursor))) {
+//         STORAGE_LOG(WARN, "fail to add item", K(ret));
+//       }
+//     }
+//     if (OB_SUCC(ret)) {
+//       if (OB_FAIL(final_round->build_fragment(cursor))) {
+//         STORAGE_LOG(WARN, "fail to build fragment", K(ret));
+//       } else {
+//         const int64_t write_fragment_time = common::ObTimeUtility::current_time() - start;
+//         STORAGE_LOG(INFO, "ObMemorySortRound", K(write_fragment_time));
+//         item_list->reset();
+//         allocator->reuse();
+//       }
+//     }
+//     latch->unlock();
+//     LOG_INFO("thread finish handle build fragment task");
+//   }
+// };
 
 template<typename T, typename Compare>
-class ObMemorySortThreadPool : public ObSimpleThreadPool
+class ObMemorySortThreadPool : public share::ObThreadPool
 {
+  typedef ObParallelExternalSortRound<T, Compare> ParallelExternalSortRound;
 public:
-  typedef ObMemoryBuildFragmentTask<T, Compare> MemoryBuildFragmentTask;
-  typedef ObParallelExternalSortRound<T, Compare> ParallelExternalSortRound;
-  void handle(void *build_fragment_task) 
+  common::ObVector<T *> **item_lists_;
+  ParallelExternalSortRound *final_round_;
+  common::ObArenaAllocator **allocators_;
+  obutil::Mutex latchs_[CONCURRENT_NUM];
+  std::atomic<bool> has_task_[CONCURRENT_NUM];
+  Compare *compare_;
+  void run(int64_t idx) final
   {
-    LOG_INFO("thread begin handle build fragment task");
-    int ret = common::OB_SUCCESS;
-    MemoryBuildFragmentTask *mbf = static_cast<MemoryBuildFragmentTask *>(build_fragment_task); 
-    int64_t cursor = mbf->cursor_;
-    common::ObVector<T *> *item_list = mbf->item_list_;
-    ParallelExternalSortRound *final_round = mbf->final_round_;
-    common::ObArenaAllocator *allocator = mbf->allocator_;
-    Compare *compare = mbf->compare_;
-    obutil::Mutex *latch = mbf->latch_;
-    delete static_cast<MemoryBuildFragmentTask *>(build_fragment_task);
-
-    int64_t start = common::ObTimeUtility::current_time();
-    std::sort(item_list->begin(), item_list->end(), *compare);
-    if (OB_FAIL(compare->result_code_)) {
-      ret = compare->result_code_;
-    } else {
-      const int64_t sort_fragment_time = common::ObTimeUtility::current_time() - start;
-      STORAGE_LOG(INFO, "ObMemorySortRound", K(sort_fragment_time));
-    }
-
-    start = common::ObTimeUtility::current_time();
-    for (int64_t i = 0; OB_SUCC(ret) && i < item_list->size(); ++i) {
-      if (OB_FAIL(final_round->add_item(*(item_list->at(i)), cursor))) {
-        STORAGE_LOG(WARN, "fail to add item", K(ret));
+    LOG_INFO("thread init start");
+    common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
+    share::ObTenantBase *tenant_base = MTL_CTX();
+    lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
+    lib::Worker::set_compatibility_mode(mode);
+    LOG_INFO("thread init finish");
+    while(!ATOMIC_LOAD(&has_set_stop())) {
+      int ret = common::OB_SUCCESS;
+      if (!has_task_[idx]) {
+        usleep(100);
+        continue;
       }
-    }
-    if (OB_SUCC(ret)) {
-      if (OB_FAIL(final_round->build_fragment(cursor))) {
-        STORAGE_LOG(WARN, "fail to build fragment", K(ret));
+      LOG_INFO("item list size", K(item_lists_[idx]->size()));
+      int64_t start = common::ObTimeUtility::current_time();
+      std::sort(item_lists_[idx]->begin(), item_lists_[idx]->end(), *compare_);
+      if (OB_FAIL(compare_->result_code_)) {
+        ret = compare_->result_code_;
       } else {
-        const int64_t write_fragment_time = common::ObTimeUtility::current_time() - start;
-        STORAGE_LOG(INFO, "ObMemorySortRound", K(write_fragment_time));
-        item_list->reset();
-        allocator->reuse();
+        const int64_t sort_fragment_time = common::ObTimeUtility::current_time() - start;
+        STORAGE_LOG(INFO, "ObMemorySortRound", K(sort_fragment_time));
       }
+
+      start = common::ObTimeUtility::current_time();
+      for (int64_t i = 0; OB_SUCC(ret) && i < item_lists_[idx]->size(); ++i) {
+        if (OB_FAIL(final_round_->add_item(*(item_lists_[idx]->at(i)), idx))) {
+          STORAGE_LOG(WARN, "fail to add item", K(ret));
+        }
+      }
+      if (OB_SUCC(ret)) {
+        if (OB_FAIL(final_round_->build_fragment(idx))) {
+          STORAGE_LOG(WARN, "fail to build fragment", K(ret));
+        } else {
+          const int64_t write_fragment_time = common::ObTimeUtility::current_time() - start;
+          STORAGE_LOG(INFO, "ObMemorySortRound", K(write_fragment_time));
+          item_lists_[idx]->reset();
+          allocators_[idx]->reuse();
+        }
+      }
+      has_task_[idx] = false;
+      latchs_[idx].unlock();
+      LOG_INFO("thread finish handle task", K(idx));
     }
-    latch->unlock();
-    LOG_INFO("thread finish handle build fragment task");
+    
   }
+  int init(common::ObVector<T *> **item_lists, ParallelExternalSortRound *final_round, common::ObArenaAllocator **allocators, Compare *compare)
+  {
+    item_lists_ = item_lists;
+    final_round_ = final_round; 
+    allocators_ = allocators;
+    compare_ = compare;
+    for (int i = 0; i < CONCURRENT_NUM; i++) {
+      has_task_[i] = false;
+    }
+    return common::OB_SUCCESS;
+  }
+
 };
+
 
 template<typename T, typename Compare>
 class ObParallelMemorySortRound
@@ -2223,7 +2292,7 @@ class ObParallelMemorySortRound
 public:
   typedef ObParallelExternalSortRound<T, Compare> ParallelExternalSortRound;
   typedef ObMemorySortThreadPool<T, Compare> MemorySortThreadPool;
-  typedef ObMemoryBuildFragmentTask<T, Compare> MemoryBuildFragmentTask;
+  // typedef ObMemoryBuildFragmentTask<T, Compare> MemoryBuildFragmentTask;
   ObParallelMemorySortRound();
   virtual ~ObParallelMemorySortRound();
   int init(const int64_t mem_limit, const int64_t expire_timestamp,
@@ -2248,16 +2317,18 @@ private:
   common::ObArenaAllocator *allocators_[CONCURRENT_NUM];
   common::ObVector<T *> *item_lists_[CONCURRENT_NUM];
   Compare *compare_;
-  MemorySortThreadPool thread_pool_;
-  obutil::Mutex latchs_[CONCURRENT_NUM];
+  // MemorySortThreadPool thread_pool_;
   int64_t cursor_;
+  MemorySortThreadPool thread_pool_;
 };
 
 template<typename T, typename Compare>
 ObParallelMemorySortRound<T, Compare>::ObParallelMemorySortRound()
   : is_inited_(false), is_in_memory_(false), has_data_(false), buf_mem_limit_(0), expire_timestamp_(0),
-    final_round_(NULL), compare_(NULL), cursor_(0)
+    final_round_(NULL), 
+    compare_(NULL), cursor_(0), thread_pool_()
 {
+  
   for (int i = 0; i < CONCURRENT_NUM; ++i) {
     allocators_[i] = new common::ObArenaAllocator(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE);
     item_lists_[i] = new common::ObVector<T *>(NULL, common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER);
@@ -2298,7 +2369,10 @@ int ObParallelMemorySortRound<T, Compare>::init(
     expire_timestamp_ = expire_timestamp;
     compare_ = compare;
     final_round_ = final_round;
-    thread_pool_.init(4, 16);
+    thread_pool_.init(item_lists_, final_round_, allocators_, compare_);
+    thread_pool_.set_thread_count(CONCURRENT_NUM);
+    thread_pool_.set_run_wrapper(MTL_CTX());
+    thread_pool_.start();
   }
   return ret;
 }
@@ -2347,11 +2421,17 @@ int ObParallelMemorySortRound<T, Compare>::build_fragment()
     ret = common::OB_NOT_INIT;
     STORAGE_LOG(WARN, "ObMemorySortRound has not been inited", K(ret));
   } else if (item_lists_[cursor_]->size() > 0) {
-    latchs_[cursor_].lock();
-    MemoryBuildFragmentTask *task = new MemoryBuildFragmentTask(cursor_, item_lists_[cursor_], final_round_, allocators_[cursor_], &latchs_[cursor_], compare_);
-    thread_pool_.push((void *)task);
+    LOG_INFO("build fragment item list size", K(cursor_), K(item_lists_[cursor_]->size()));
+    _LOG_INFO("build fragment item_lists[%ld] addr %p", cursor_, item_lists_[cursor_]);
+    thread_pool_.latchs_[cursor_].lock();
+    // MemoryBuildFragmentTask *task = new MemoryBuildFragmentTask(cursor_, item_lists_[cursor_], final_round_, allocators_[cursor_], &latchs_[cursor_], compare_);
+    // thread_pool_.push((void *)task);
+    LOG_INFO("set has task true", K(cursor_));
+    thread_pool_.has_task_[cursor_] = true;
   }
   cursor_ = (cursor_ + 1) % CONCURRENT_NUM;
+  thread_pool_.latchs_[cursor_].lock();
+  thread_pool_.latchs_[cursor_].unlock();
   return ret;
 }
 
@@ -2364,9 +2444,9 @@ int ObParallelMemorySortRound<T, Compare>::finish()
     STORAGE_LOG(WARN, "ObMemorySortRound has not been inited", K(ret));
   }
   is_in_memory_ = false;
-  if (item_lists_[cursor_]->size() != 0 && latchs_[cursor_].trylock()) {
+  if (item_lists_[cursor_]->size() != 0 && thread_pool_.latchs_[cursor_].trylock()) {
     has_data_ = true;
-    latchs_[cursor_].unlock();
+    thread_pool_.latchs_[cursor_].unlock();
     if (OB_FAIL(build_fragment())) {
       STORAGE_LOG(WARN, "fail to build fragment", K(ret));
     }
@@ -2374,10 +2454,10 @@ int ObParallelMemorySortRound<T, Compare>::finish()
   }
   for (int i = 0; i < CONCURRENT_NUM; i++) {
     STORAGE_LOG(INFO, "wait for async finish", K(i));
-    while (!latchs_[i].trylock()) {
+    while (!thread_pool_.latchs_[i].trylock()) {
       usleep(100);
     }
-    latchs_[i].unlock();
+    thread_pool_.latchs_[i].unlock();
   }
 
   return ret;
@@ -2397,6 +2477,8 @@ void ObParallelMemorySortRound<T, Compare>::reset()
   }
   compare_ = NULL;
   cursor_ = 0;
+  thread_pool_.stop();
+  thread_pool_.wait();
 }
 
 
@@ -2469,7 +2551,7 @@ int ObParallelExternalSort<T, Compare>::init(
     if (OB_FAIL(final_round_.init(file_buf_size_,
         expire_timestamp, tenant_id_, compare_))) {
       STORAGE_LOG(WARN, "fail to init current sort round", K(ret));
-    } else if (OB_FAIL(memory_sort_round_.init(buf_mem_limit_,
+    } else if (OB_FAIL(memory_sort_round_.init(buf_mem_limit_ / CONCURRENT_NUM,
         expire_timestamp, compare_, &final_round_))) {
       STORAGE_LOG(WARN, "fail to init memory sort round", K(ret));
     } else {
