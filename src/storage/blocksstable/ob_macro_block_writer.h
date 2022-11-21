@@ -60,6 +60,7 @@ public:
       common::ObIAllocator &allocator);
   int compress_encrypt_micro_block(ObMicroBlockDesc &micro_block_desc);
   int dump_micro_block_writer_buffer(const char *buf, const int64_t size);
+  void reset_micro_block_merge_verify_lebel();
   void reset();
 private:
   int prepare_micro_block_reader(
@@ -99,6 +100,7 @@ public:
       ObDataStoreDesc &data_store_desc,
       const ObMacroDataSeq &start_seq,
       ObIMacroBlockFlushCallback *callback = nullptr);
+  void load_data_direct_demo();
   int append_macro_block(const ObMacroBlockDesc &macro_desc);
   int append_index_micro_block(ObMicroBlockDesc &micro_block_desc);
   int append_micro_block(const ObMicroBlock &micro_block);

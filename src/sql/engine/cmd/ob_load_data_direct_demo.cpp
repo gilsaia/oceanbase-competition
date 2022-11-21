@@ -932,7 +932,9 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   } else if (OB_ISNULL(table_schema)) {
     ret = OB_TABLE_NOT_EXIST;
     LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
-  } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
+  }else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
+    LOG_WARN("fail to set compressor none", KR(ret));
+  }else if (OB_UNLIKELY(table_schema->is_heap_table())) {
     ret = OB_NOT_SUPPORTED;
     LOG_WARN("not support heap table", KR(ret));
   }
