@@ -944,6 +944,7 @@ int ObLoadSSTableWriter::close()
 ObLoadDataDirectDemo::ObLoadDataDirectDemo() 
 {
   memset(is_ready, 0, sizeof(int) * PARALLEL_LOAD_NUM);
+  memset(is_finish, -1, sizeof(int) * PARALLEL_LOAD_NUM);
   pool_.inner_init(this);
   pool_.set_thread_count(PARALLEL_LOAD_NUM);
   pool_.set_run_wrapper(MTL_CTX());
@@ -1114,16 +1115,18 @@ int ObLoadDataDirectDemo::do_load()
         }
         // prepare new_row
         csv_parser_.copy_row(parallel_new_row[idx]);
+        is_finish[idx] = 0;
         is_ready[idx] ^= 1;
       }
     }
   }
   // wait thread pool all finish
   LOG_INFO("ObLoadDataDirectDemo wait thread pool all finish", KR(ret));
-  // for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
-  //   LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
-  //   while (is_ready[i]);
-  // }
+  for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+    LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
+    // while (is_finish[i] == 0) {}
+    ::usleep(100L * 1000L);
+  }
   LOG_INFO("ObLoadDataDirectDemo thread pool stop", KR(ret));
   pool_.stop();
   LOG_INFO("ObLoadDataDirectDemo thread pool wait", KR(ret));

@@ -227,6 +227,7 @@ public:
           } else if (OB_FAIL(oldd_->parallel_external_sort_[idx].append_row(*datum_row))) {
             LOG_WARN("fail to append row", KR(ret));
           }
+          oldd_->is_finish[idx] = 1;
           oldd_->is_ready[idx] ^= 1;
         } 
       }
@@ -243,12 +244,11 @@ public:
   //ObLoadExternalSort external_sort_;
   ObLoadExternalSort parallel_external_sort_[PARALLEL_LOAD_NUM];
   int is_ready[PARALLEL_LOAD_NUM] = {0};
+  int is_finish[PARALLEL_LOAD_NUM];
   ObNewRow parallel_new_row[PARALLEL_LOAD_NUM];
   ObLoadExternalSort combine_external_sort_;
   ObLoadSSTableWriter sstable_writer_;
-
   friend class LoadThreadPool;
 };
-
 } // namespace sql
 } // namespace oceanbase
