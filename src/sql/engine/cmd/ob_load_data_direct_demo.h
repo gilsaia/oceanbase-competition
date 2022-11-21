@@ -153,10 +153,8 @@ public:
            int64_t file_buf_size);
   int append_row(const ObLoadDatumRow &datum_row);
   int close(bool final_merge = true);
-  void set_finish(bool flag) { is_finish_ = flag; }
   int get_next_row(const ObLoadDatumRow *&datum_row);
   int transfer_final_sorted(ObLoadExternalSort &merge_sorter);
-  bool finish();
 private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
@@ -166,7 +164,6 @@ public:
 private:
   bool is_closed_;
   bool is_inited_;
-  std::atomic<bool> is_finish_{true};
   
 };
 
@@ -222,6 +219,7 @@ public:
       int ret = OB_SUCCESS;
       while (!ATOMIC_LOAD(&has_set_stop())) {
         if (oldd_->is_ready[idx]) {
+          // LOG_INFO("LoadThreadPool run", KR(ret));
           const ObLoadDatumRow *datum_row = nullptr;
           ObNewRow *new_row = &oldd_->parallel_new_row[idx];
           if (OB_FAIL(oldd_->parallel_row_caster_[idx].get_casted_row(*new_row, datum_row))) {
@@ -229,7 +227,6 @@ public:
           } else if (OB_FAIL(oldd_->parallel_external_sort_[idx].append_row(*datum_row))) {
             LOG_WARN("fail to append row", KR(ret));
           }
-          oldd_->parallel_external_sort_[idx].set_finish(true);
           oldd_->is_ready[idx] ^= 1;
         } 
       }

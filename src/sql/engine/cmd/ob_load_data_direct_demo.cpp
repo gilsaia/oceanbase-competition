@@ -177,16 +177,18 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
       collation_type_ = collation_type;
       is_inited_ = true;
     }
-    for (int i = 0; i < init_num; ++i) {
-      objs = nullptr;
-      ObNewRow &new_row = parallel_row[i];
-      if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-        LOG_WARN("fail to alloc memory", KR(ret));
-      } else {
-        new (objs) ObObj[column_count];
-        new_row.cells_ = objs;
-        new_row.count_ = column_count;
+    if (parallel_row != nullptr) {
+      for (int i = 0; i < init_num; ++i) {
+        objs = nullptr;
+        ObNewRow &new_row = parallel_row[i];
+        if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+          LOG_WARN("fail to alloc memory", KR(ret));
+        } else {
+          new (objs) ObObj[column_count];
+          new_row.cells_ = objs;
+          new_row.count_ = column_count;
+        }
       }
     }
   }
@@ -691,11 +693,6 @@ int ObLoadExternalSort::transfer_final_sorted(ObLoadExternalSort &merge_sorter)
   return ret;
 }
 
-bool ObLoadExternalSort::finish() 
-{
-  return is_finish_;
-}
-
 /**
  * ObLoadSSTableWriter
  */
@@ -946,6 +943,7 @@ int ObLoadSSTableWriter::close()
 
 ObLoadDataDirectDemo::ObLoadDataDirectDemo() 
 {
+  memset(is_ready, 0, sizeof(int) * PARALLEL_LOAD_NUM);
   pool_.inner_init(this);
   pool_.set_thread_count(PARALLEL_LOAD_NUM);
   pool_.set_run_wrapper(MTL_CTX());
@@ -1121,24 +1119,30 @@ int ObLoadDataDirectDemo::do_load()
     }
   }
   // wait thread pool all finish
-  for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
-    while (is_ready[i]);
-  }
+  LOG_INFO("ObLoadDataDirectDemo wait thread pool all finish", KR(ret));
+  // for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+  //   LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
+  //   while (is_ready[i]);
+  // }
+  LOG_INFO("ObLoadDataDirectDemo thread pool stop", KR(ret));
   pool_.stop();
+  LOG_INFO("ObLoadDataDirectDemo thread pool wait", KR(ret));
   pool_.wait();
 
   // combine sort
+  LOG_INFO("ObLoadDataDirectDemo combine_sort", KR(ret));
   if (OB_SUCC(ret)) {
     if (OB_FAIL(combine_sort())) {
       LOG_WARN("fail to combine sort", KR(ret));
     }
   }
-
+  LOG_INFO("ObLoadDataDirectDemo combine_external_sort close", KR(ret));
   if (OB_SUCC(ret)) {
     if (OB_FAIL(combine_external_sort_.close(true))) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
+  LOG_INFO("ObLoadDataDirectDemo combine_external_sort get_next_row", KR(ret));
   while (OB_SUCC(ret)) {
     if (OB_FAIL(combine_external_sort_.get_next_row(datum_row))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
