@@ -157,7 +157,7 @@ private:
   blocksstable::ObStorageDatumUtils datum_utils_;
   ObLoadDatumRowCompare compare_;
   // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
-  storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
+  // storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
   storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   bool is_closed_;
   bool is_inited_;
@@ -187,7 +187,7 @@ private:
   storage::ObITable::TableKey table_key_;
   blocksstable::ObSSTableIndexBuilder sstable_index_builder_;
   blocksstable::ObDataStoreDesc data_store_desc_;
-  blocksstable::ObMacroBlockWriter macro_block_writer_;
+  // blocksstable::ObMacroBlockWriter macro_block_writer_;
   blocksstable::ObMacroBlockWriter macro_block_writers_[MACRO_PARALLEL_DEGREE];
   blocksstable::ObDatumRow datum_row_;
   bool is_closed_;
