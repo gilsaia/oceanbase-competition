@@ -60,8 +60,9 @@ public:
   ~ObLoadCSVPaser();
   void reset();
   int init(const ObDataInFileStruct &format, int64_t column_count,
-           common::ObCollationType collation_type);
+           common::ObCollationType collation_type, common::ObNewRow *row = nullptr, int init_num = 0);
   int get_next_row(ObLoadDataBuffer &buffer, common::ObNewRow *&row);
+  int copy_row(common::ObNewRow &row);
 private:
   struct UnusedRowHandler
   {
@@ -222,13 +223,12 @@ public:
       while (!ATOMIC_LOAD(&has_set_stop())) {
         if (oldd_->is_ready[idx]) {
           const ObLoadDatumRow *datum_row = nullptr;
-          ObNewRow *new_row = oldd_->parallel_new_row[idx];
+          ObNewRow *new_row = &oldd_->parallel_new_row[idx];
           if (OB_FAIL(oldd_->parallel_row_caster_[idx].get_casted_row(*new_row, datum_row))) {
             LOG_WARN("fail to cast row", KR(ret));
           } else if (OB_FAIL(oldd_->parallel_external_sort_[idx].append_row(*datum_row))) {
             LOG_WARN("fail to append row", KR(ret));
           }
-          delete new_row;
           oldd_->parallel_external_sort_[idx].set_finish(true);
           oldd_->is_ready[idx] ^= 1;
         } 
@@ -246,7 +246,7 @@ public:
   //ObLoadExternalSort external_sort_;
   ObLoadExternalSort parallel_external_sort_[PARALLEL_LOAD_NUM];
   int is_ready[PARALLEL_LOAD_NUM] = {0};
-  ObNewRow *parallel_new_row[PARALLEL_LOAD_NUM];
+  ObNewRow parallel_new_row[PARALLEL_LOAD_NUM];
   ObLoadExternalSort combine_external_sort_;
   ObLoadSSTableWriter sstable_writer_;
 

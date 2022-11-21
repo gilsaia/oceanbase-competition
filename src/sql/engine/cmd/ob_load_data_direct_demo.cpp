@@ -156,7 +156,7 @@ void ObLoadCSVPaser::reset()
 }
 
 int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
-                         ObCollationType collation_type)
+                         ObCollationType collation_type, ObNewRow *parallel_row, int init_num)
 {
   int ret = OB_SUCCESS;
   if (IS_INIT) {
@@ -176,6 +176,18 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
       row_.count_ = column_count;
       collation_type_ = collation_type;
       is_inited_ = true;
+    }
+    for (int i = 0; i < init_num; ++i) {
+      objs = nullptr;
+      ObNewRow &new_row = parallel_row[i];
+      if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+        LOG_WARN("fail to alloc memory", KR(ret));
+      } else {
+        new (objs) ObObj[column_count];
+        new_row.cells_ = objs;
+        new_row.count_ = column_count;
+      }
     }
   }
   return ret;
@@ -213,12 +225,30 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, ObNewRow *&row)
           obj.set_collation_type(collation_type_);
         }
       }
-      row = new ObNewRow();
-      int64_t deep_copy_size = row_.get_deep_copy_size();
-      char *buf = static_cast<char*>(allocator_.alloc(deep_copy_size));
-      int64_t pos = 0;
-      row->deep_copy(row_, buf, deep_copy_size, pos);
-      //row = &row_;
+      // row = new ObNewRow();
+      // int64_t deep_copy_size = row_.get_deep_copy_size();
+      // char *buf = static_cast<char*>(allocator_.alloc(deep_copy_size));
+      // int64_t pos = 0;
+      // row->deep_copy(row_, buf, deep_copy_size, pos);
+      row = &row_;
+    }
+  }
+  return ret;
+}
+
+int ObLoadCSVPaser::copy_row(ObNewRow &dst_row)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; i < row_.count_; ++i) {
+    ObObj &src_obj = row_.cells_[i];
+    ObObj &dst_obj = dst_row.cells_[i];
+    if (src_obj.is_null()) {
+      dst_obj.set_null();
+    } else {
+      ObString value;
+      src_obj.get_string(value);
+      dst_obj.set_string(ObVarcharType, value);
+      dst_obj.set_collation_type(collation_type_);
     }
   }
   return ret;
@@ -988,7 +1018,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   }
   // init csv_parser_
   else if (OB_FAIL(csv_parser_.init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
-                                    load_args.file_cs_type_))) {
+                                    load_args.file_cs_type_, parallel_new_row, PARALLEL_LOAD_NUM))) {
     LOG_WARN("fail to init csv parser", KR(ret));
   }
   // init file_reader_
@@ -1084,7 +1114,8 @@ int ObLoadDataDirectDemo::do_load()
         while (is_ready[idx]) {
           idx = (idx + 1) % PARALLEL_LOAD_NUM;
         }
-        parallel_new_row[idx] = new_row;
+        // prepare new_row
+        csv_parser_.copy_row(parallel_new_row[idx]);
         is_ready[idx] ^= 1;
       }
     }
