@@ -2496,6 +2496,8 @@ public:
   int do_sort();
   int get_next_item(const T *&item);
   void clean_up();
+  int get_final_round(ParallelExternalSortRound *&final_round);
+  int transfer_final_sorted_fragment_iter(ObParallelExternalSort<T, Compare> &merge_sorter);
   TO_STRING_KV(K(is_inited_), K(file_buf_size_), K(buf_mem_limit_), K(expire_timestamp_),
      KP(tenant_id_), KP(compare_));
 private:
@@ -2629,6 +2631,27 @@ void ObParallelExternalSort<T, Compare>::clean_up()
   if (final_round_.is_inited() && common::OB_SUCCESS != (tmp_ret = final_round_.clean_up())) {
     STORAGE_LOG(WARN, "fail to clean up sort rounds", K(tmp_ret));
   }
+}
+
+template<typename T, typename Compare>
+int ObParallelExternalSort<T, Compare>::get_final_round(ParallelExternalSortRound *&final_round) {
+  int ret = common::OB_SUCCESS;
+  final_round = final_round_;
+  return ret;
+}
+
+template<typename T, typename Compare>
+int ObParallelExternalSort<T, Compare>::transfer_final_sorted_fragment_iter(
+    ObParallelExternalSort<T, Compare> &merge_sorter)
+{
+  int ret = common::OB_SUCCESS;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = common::OB_NOT_INIT;
+    STORAGE_LOG(WARN, "ObExternalSort has not been inited", K(ret));
+  } else if (is_empty_) {
+    ret = common::OB_SUCCESS;
+  } else if (OB_FAIL(merge_sorter.get_))
+  return ret;
 }
 
 }  // end namespace storage
