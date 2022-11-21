@@ -143,6 +143,7 @@ private:
 
 class ObLoadExternalSort
 {
+  static const int64_t EXTERNAL_PARALLEL_DEGREE=4;
 public:
   ObLoadExternalSort();
   ~ObLoadExternalSort();
@@ -157,6 +158,7 @@ private:
   ObLoadDatumRowCompare compare_;
   // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
   storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
+  storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   bool is_closed_;
   bool is_inited_;
 };

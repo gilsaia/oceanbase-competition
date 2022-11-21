@@ -567,7 +567,10 @@ ObLoadExternalSort::ObLoadExternalSort()
 
 ObLoadExternalSort::~ObLoadExternalSort()
 {
-  external_sort_.clean_up();
+  // external_sort_.clean_up();
+  for(int64_t i=0;i<EXTERNAL_PARALLEL_DEGREE;++i){
+    external_sorts_[i].clean_up();
+  }
 }
 
 int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size,
@@ -591,9 +594,15 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
       LOG_WARN("fail to init datum utils", KR(ret));
     } else if (OB_FAIL(compare_.init(rowkey_column_num, &datum_utils_))) {
       LOG_WARN("fail to init compare", KR(ret));
-    } else if (OB_FAIL(external_sort_.init(mem_size, file_buf_size, 0, MTL_ID(), &compare_))) {
-      LOG_WARN("fail to init external sort", KR(ret));
+    // } else if (OB_FAIL(external_sort_.init(mem_size, file_buf_size, 0, MTL_ID(), &compare_))) {
+    //   LOG_WARN("fail to init external sort", KR(ret));
     } else {
+      for(int64_t i=0;i<EXTERNAL_PARALLEL_DEGREE;++i){
+        if(OB_FAIL(external_sorts_[i].init(mem_size,file_buf_size,0,MTL_ID(),&compare_))){
+          LOG_WARN("fail to init external sort",KR(ret));
+          return ret;
+        }
+      }
       is_inited_ = true;
     }
   }
@@ -609,7 +618,7 @@ int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
   } else if (OB_UNLIKELY(is_closed_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sort_.add_item(datum_row))) {
+  } else if (OB_FAIL(external_sorts_[0].add_item(datum_row))) {
     LOG_WARN("fail to add item", KR(ret));
   }
   return ret;
@@ -624,7 +633,7 @@ int ObLoadExternalSort::close()
   } else if (OB_UNLIKELY(is_closed_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sort_.do_sort())) {
+  } else if (OB_FAIL(external_sorts_[0].do_sort())) {
     LOG_WARN("fail to do sort", KR(ret));
   } else {
     is_closed_ = true;
@@ -641,7 +650,7 @@ int ObLoadExternalSort::get_next_row(const ObLoadDatumRow *&datum_row)
   } else if (OB_UNLIKELY(!is_closed_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected not closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sort_.get_next_item(datum_row))) {
+  } else if (OB_FAIL(external_sorts_[0].get_next_item(datum_row))) {
     LOG_WARN("fail to get next item", KR(ret));
   }
   return ret;
