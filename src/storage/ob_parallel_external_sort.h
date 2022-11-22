@@ -1512,7 +1512,7 @@ int ObFragmentMergeBuffer<T, Compare>::add_item(const T &item)
     queue = backup_queue_;
   }
 
-  if (OB_ISNULL(buf = static_cast<char *>(allocator_->alloc(item_size)))) {
+  if (OB_ISNULL(buf = static_cast<char *>(allocator->alloc(item_size)))) {
     LOG_WARN("alloc null", K(ret));
   } else if (OB_ISNULL(new_item = new (buf) T())) {
     LOG_WARN("new item is null", K(ret));
