@@ -200,7 +200,7 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
 {
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
-  static const uint32_t PARALLEL_LOAD_NUM = 1;
+  static const uint32_t PARALLEL_LOAD_NUM = 4;
 public:
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
@@ -222,13 +222,13 @@ public:
           // LOG_INFO("LoadThreadPool run", KR(ret));
           const ObLoadDatumRow *datum_row = nullptr;
           ObNewRow *new_row = &oldd_->parallel_new_row[idx];
+          oldd_->is_ready[idx] = 0;
           if (OB_FAIL(oldd_->parallel_row_caster_[idx].get_casted_row(*new_row, datum_row))) {
             LOG_WARN("fail to cast row", KR(ret));
           } else if (OB_FAIL(oldd_->parallel_external_sort_[idx].append_row(*datum_row))) {
             LOG_WARN("fail to append row", KR(ret));
           }
           oldd_->is_finish[idx] = 1;
-          oldd_->is_ready[idx] ^= 1;
         } 
       }
     }
@@ -243,8 +243,8 @@ public:
   ObLoadRowCaster parallel_row_caster_[PARALLEL_LOAD_NUM];
   //ObLoadExternalSort external_sort_;
   ObLoadExternalSort parallel_external_sort_[PARALLEL_LOAD_NUM];
-  int is_ready[PARALLEL_LOAD_NUM] = {0};
-  int is_finish[PARALLEL_LOAD_NUM];
+  std::atomic<int> is_ready[PARALLEL_LOAD_NUM];
+  std::atomic<int> is_finish[PARALLEL_LOAD_NUM];
   ObNewRow parallel_new_row[PARALLEL_LOAD_NUM];
   ObLoadExternalSort combine_external_sort_;
   ObLoadSSTableWriter sstable_writer_;

@@ -943,8 +943,12 @@ int ObLoadSSTableWriter::close()
 
 ObLoadDataDirectDemo::ObLoadDataDirectDemo() 
 {
-  memset(is_ready, 0, sizeof(int) * PARALLEL_LOAD_NUM);
-  memset(is_finish, -1, sizeof(int) * PARALLEL_LOAD_NUM);
+  // memset(is_ready, 0, sizeof(int) * PARALLEL_LOAD_NUM);
+  for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+    is_ready[i] = 0;
+    is_finish[i] = -1;
+  }
+  // memset(is_finish, -1, sizeof(int) * PARALLEL_LOAD_NUM);
   pool_.inner_init(this);
   pool_.set_thread_count(PARALLEL_LOAD_NUM);
   pool_.set_run_wrapper(MTL_CTX());
@@ -1078,6 +1082,7 @@ int ObLoadDataDirectDemo::do_load()
   int ret = OB_SUCCESS;
   ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
+  int idx = 0;
   while (OB_SUCC(ret)) {
     if (OB_FAIL(buffer_.squash())) {
       LOG_WARN("fail to squash buffer", KR(ret));
@@ -1109,14 +1114,14 @@ int ObLoadDataDirectDemo::do_load()
         // } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {
         //  LOG_WARN("fail to append row", KR(ret));
         // }
-        int idx = 0;
-        while (is_ready[idx]) {
+        idx = (idx + 1) % PARALLEL_LOAD_NUM;
+        while (is_finish[idx] == 0) {
           idx = (idx + 1) % PARALLEL_LOAD_NUM;
         }
-        // prepare new_row
-        csv_parser_.copy_row(parallel_new_row[idx]);
         is_finish[idx] = 0;
-        is_ready[idx] ^= 1;
+        // prepare new_row
+        csv_parser_.copy_row(parallel_new_row[idx]); 
+        is_ready[idx] = 1;
       }
     }
   }
