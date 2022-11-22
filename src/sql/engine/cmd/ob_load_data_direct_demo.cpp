@@ -1114,14 +1114,15 @@ int ObLoadDataDirectDemo::do_load()
         // } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {
         //  LOG_WARN("fail to append row", KR(ret));
         // }
-        idx = (idx + 1) % PARALLEL_LOAD_NUM;
         while (is_finish[idx] == 0) {
           idx = (idx + 1) % PARALLEL_LOAD_NUM;
+          ::usleep(10);
         }
         is_finish[idx] = 0;
         // prepare new_row
         csv_parser_.copy_row(parallel_new_row[idx]); 
         is_ready[idx] = 1;
+        idx = (idx + 1) % PARALLEL_LOAD_NUM;
       }
     }
   }
@@ -1129,9 +1130,9 @@ int ObLoadDataDirectDemo::do_load()
   LOG_INFO("ObLoadDataDirectDemo wait thread pool all finish", KR(ret));
   for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
     LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
-    while (is_finish[i] == 0) {
-      ::usleep(100L * 1000L);
-    }
+    // while (is_finish[i] == 0) {
+      ::usleep(1000L * 1000L);
+    // }
     // ::usleep(1000L * 1000L);
   }
   LOG_INFO("ObLoadDataDirectDemo thread pool stop", KR(ret));
