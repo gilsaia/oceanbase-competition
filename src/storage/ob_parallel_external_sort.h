@@ -1521,7 +1521,7 @@ int ObFragmentMergeBuffer<T, Compare>::add_item(const T &item)
     if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
       LOG_WARN("deep copy fail", K(ret));
     } else {
-      queue_->push(new_item);
+      queue->push(new_item);
     }
   }
   return ret;
