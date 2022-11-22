@@ -1124,8 +1124,10 @@ int ObLoadDataDirectDemo::do_load()
   LOG_INFO("ObLoadDataDirectDemo wait thread pool all finish", KR(ret));
   for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
     LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
-    // while (is_finish[i] == 0) {}
-    ::usleep(1000L * 1000L);
+    while (is_finish[i] == 0) {
+      ::usleep(100L * 1000L);
+    }
+    // ::usleep(1000L * 1000L);
   }
   LOG_INFO("ObLoadDataDirectDemo thread pool stop", KR(ret));
   pool_.stop();
