@@ -835,7 +835,8 @@ int ObLoadSSTableWriter::init_macro_block_writer(const ObTableSchema *table_sche
   if (OB_SUCC(ret)) {
     for(int64_t i=0;i<MACRO_PARALLEL_DEGREE;++i){
       ObMacroDataSeq data_seq;
-      if(OB_FAIL(data_seq.set_parallel_degree(i))){
+      int64_t degree=i<<32;
+      if(OB_FAIL(data_seq.set_parallel_degree(degree))){
         LOG_WARN("fail to set data seq parallel degree",KR(ret),K(data_seq));
       }else if(OB_FAIL(macro_block_writers_[i].open(data_store_desc_,data_seq))){
         LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
