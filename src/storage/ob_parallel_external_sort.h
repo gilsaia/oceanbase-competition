@@ -1474,8 +1474,8 @@ int ObFragmentMergeBuffer<T, Compare>::get_next_item(const T *&item)
         item = queue_.front();
         queue_.pop();
         if (item == NULL) {
-          allocators_[produce_cursor_]->reuse();
-          produce_cursor_ = (produce_cursor_ + 1) % BUFFER_NUM;
+          allocators_[consume_cursor_]->reuse();
+          consume_cursor_ = (consume_cursor_ + 1) % BUFFER_NUM;
         } else {
           return ret;
         }
@@ -1499,8 +1499,8 @@ int ObFragmentMergeBuffer<T, Compare>::add_item(const T &item)
       std::lock_guard<std::mutex> lk(latch_);
       queue_.push(static_cast<const T *>(NULL));
     }
-    consume_cursor_ = (consume_cursor_ + 1) % BUFFER_NUM;
-    allocator = allocators_[consume_cursor_];
+    produce_cursor_ = (produce_cursor_ + 1) % BUFFER_NUM;
+    allocator = allocators_[produce_cursor_];
     while (allocator->used() + item_size > buf_limit_) {
       LOG_INFO("all allocators are full, wait");
       usleep(100);
