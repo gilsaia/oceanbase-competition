@@ -2,6 +2,7 @@
 
 #include "lib/file/ob_file.h"
 #include "lib/timezone/ob_timezone_info.h"
+#include "lib/atomic/ob_atomic.h"
 #include "sql/engine/cmd/ob_load_data_impl.h"
 #include "sql/engine/cmd/ob_load_data_parser.h"
 #include "storage/blocksstable/ob_index_block_builder.h"
@@ -150,8 +151,11 @@ public:
   int init(const share::schema::ObTableSchema *table_schema, int64_t mem_size,
            int64_t file_buf_size);
   int append_row(const ObLoadDatumRow &datum_row);
+  int append_row_parallel(const ObLoadDatumRow &datum_row,const int64_t index);
   int close();
+  int close_parallel(const int64_t index);
   int get_next_row(const ObLoadDatumRow *&datum_row);
+  int get_next_row_parallel(const ObLoadDatumRow *&datum_row,const int64_t index);
 private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
@@ -171,6 +175,7 @@ public:
   ~ObLoadSSTableWriter();
   int init(const share::schema::ObTableSchema *table_schema);
   int append_row(const ObLoadDatumRow &datum_row);
+  int append_row_parallel(const ObLoadDatumRow &datum_row,const int64_t index);
   int close();
 private:
   int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);
@@ -190,6 +195,7 @@ private:
   // blocksstable::ObMacroBlockWriter macro_block_writer_;
   blocksstable::ObMacroBlockWriter macro_block_writers_[MACRO_PARALLEL_DEGREE];
   blocksstable::ObDatumRow datum_row_;
+  bool writer_spin_lock_[MACRO_PARALLEL_DEGREE];
   bool is_closed_;
   bool is_inited_;
 };
