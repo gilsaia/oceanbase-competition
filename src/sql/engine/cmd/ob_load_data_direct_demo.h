@@ -55,6 +55,7 @@ private:
 
 class ObLoadCSVPaser
 {
+  static const uint32_t PARALLEL_LOAD_NUM = 4;
 public:
   ObLoadCSVPaser();
   ~ObLoadCSVPaser();
@@ -62,7 +63,7 @@ public:
   int init(const ObDataInFileStruct &format, int64_t column_count,
            common::ObCollationType collation_type, common::ObNewRow *row = nullptr, int init_num = 0);
   int get_next_row(ObLoadDataBuffer &buffer, common::ObNewRow *&row);
-  int copy_row(common::ObNewRow &row);
+  int copy_row(common::ObNewRow &row, int idx);
 private:
   struct UnusedRowHandler
   {
@@ -80,6 +81,7 @@ private:
   UnusedRowHandler unused_row_handler_;
   common::ObSEArray<ObCSVGeneralParser::LineErrRec, 1> err_records_;
   bool is_inited_;
+  char *new_row_buf_[PARALLEL_LOAD_NUM];
 };
 
 class ObLoadDatumRow
@@ -152,6 +154,7 @@ public:
   int init(const share::schema::ObTableSchema *table_schema, int64_t mem_size,
            int64_t file_buf_size);
   int append_row(const ObLoadDatumRow &datum_row);
+  int64_t row_num() { return external_sort_.items_num(); }
   int close(bool final_merge = true);
   int get_next_row(const ObLoadDatumRow *&datum_row);
   int transfer_final_sorted(ObLoadExternalSort &merge_sorter);
@@ -218,8 +221,14 @@ public:
     {
       int ret = OB_SUCCESS;
       while (!ATOMIC_LOAD(&has_set_stop())) {
-        if (oldd_->is_ready[idx]) {
+        if (!oldd_->is_ready[idx]) {
+          ::usleep(10);
+          continue;
+        }
+        {
           // LOG_INFO("LoadThreadPool run", KR(ret));
+          if (oldd_->load_row_num_ == 1000000)
+            _LOG_INFO("ObLoadDataDirectDemo idx %ld", idx);
           const ObLoadDatumRow *datum_row = nullptr;
           ObNewRow *new_row = &oldd_->parallel_new_row[idx];
           oldd_->is_ready[idx] = 0;
@@ -248,6 +257,7 @@ public:
   ObNewRow parallel_new_row[PARALLEL_LOAD_NUM];
   ObLoadExternalSort combine_external_sort_;
   ObLoadSSTableWriter sstable_writer_;
+  int64_t load_row_num_;
   friend class LoadThreadPool;
 };
 } // namespace sql

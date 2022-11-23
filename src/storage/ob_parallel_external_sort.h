@@ -1672,6 +1672,7 @@ public:
   int do_sort(const bool final_merge);
   int get_next_item(const T *&item);
   void clean_up();
+  int64 items_num() { return items_num_; }
   int add_fragment_iter(ObFragmentIterator<T> *iter);
   int transfer_final_sorted_fragment_iter(ObExternalSort<T, Compare> &merge_sorter);
   int get_current_round(ExternalSortRound *&round);
@@ -1680,6 +1681,7 @@ public:
 private:
   static const int64_t EXTERNAL_SORT_ROUND_CNT = 2;
   bool is_inited_;
+  int64_t items_num_;
   int64_t file_buf_size_;
   int64_t buf_mem_limit_;
   int64_t expire_timestamp_;
@@ -1695,7 +1697,7 @@ private:
 
 template<typename T, typename Compare>
 ObExternalSort<T, Compare>::ObExternalSort()
-  : is_inited_(false), file_buf_size_(0), buf_mem_limit_(0), expire_timestamp_(0), merge_count_per_round_(0),
+  : is_inited_(false), items_num_(0), file_buf_size_(0), buf_mem_limit_(0), expire_timestamp_(0), merge_count_per_round_(0),
     compare_(NULL), memory_sort_round_(), curr_round_(NULL), next_round_(NULL),
     is_empty_(true), tenant_id_(common::OB_INVALID_ID)
 {
@@ -1761,6 +1763,7 @@ int ObExternalSort<T, Compare>::add_item(const T &item)
   } else if (OB_FAIL(memory_sort_round_.add_item(item))) {
     STORAGE_LOG(WARN, "fail to add item in memory sort round", K(ret));
   }
+  items_num_++;
   return ret;
 }
 

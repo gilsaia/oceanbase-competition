@@ -179,16 +179,18 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
     }
     if (parallel_row != nullptr) {
       for (int i = 0; i < init_num; ++i) {
-        objs = nullptr;
-        ObNewRow &new_row = parallel_row[i];
-        if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
-          ret = OB_ALLOCATE_MEMORY_FAILED;
-          LOG_WARN("fail to alloc memory", KR(ret));
-        } else {
-          new (objs) ObObj[column_count];
-          new_row.cells_ = objs;
-          new_row.count_ = column_count;
-        }
+        // objs = nullptr;
+        // ObNewRow &new_row = parallel_row[i];
+        // if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
+        //   ret = OB_ALLOCATE_MEMORY_FAILED;
+        //   LOG_WARN("fail to alloc memory", KR(ret));
+        // } else {
+        //   new (objs) ObObj[column_count];
+        //   new_row.cells_ = objs;
+        //   new_row.count_ = column_count;
+        // }
+        int64_t deep_copy_size = row_.get_deep_copy_size();
+        new_row_buf_[i] = static_cast<char*>(allocator_.alloc(deep_copy_size + 256));
       }
     }
   }
@@ -238,21 +240,24 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, ObNewRow *&row)
   return ret;
 }
 
-int ObLoadCSVPaser::copy_row(ObNewRow &dst_row)
+int ObLoadCSVPaser::copy_row(ObNewRow &dst_row, int idx)
 {
   int ret = OB_SUCCESS;
-  for (int64_t i = 0; i < row_.count_; ++i) {
-    ObObj &src_obj = row_.cells_[i];
-    ObObj &dst_obj = dst_row.cells_[i];
-    if (src_obj.is_null()) {
-      dst_obj.set_null();
-    } else {
-      ObString value;
-      src_obj.get_string(value);
-      dst_obj.set_string(ObVarcharType, value);
-      dst_obj.set_collation_type(collation_type_);
-    }
-  }
+  // for (int64_t i = 0; i < row_.count_; ++i) {
+  //   ObObj &src_obj = row_.cells_[i];
+  //   ObObj &dst_obj = dst_row.cells_[i];
+  //   if (src_obj.is_null()) {
+  //     dst_obj.set_null();
+  //   } else {
+  //     ObString value;
+  //     src_obj.get_string(value);
+  //     dst_obj.set_string(ObVarcharType, value);
+  //     dst_obj.set_collation_type(collation_type_);
+  //   }
+  // }
+  int64_t pos = 0;
+  int64_t deep_copy_size = row_.get_deep_copy_size();
+  dst_row.deep_copy(row_, new_row_buf_[idx], deep_copy_size, pos);
   return ret;
 }
 
@@ -1083,6 +1088,7 @@ int ObLoadDataDirectDemo::do_load()
   ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
   int idx = 0;
+  int64 row_num = 0;
   while (OB_SUCC(ret)) {
     if (OB_FAIL(buffer_.squash())) {
       LOG_WARN("fail to squash buffer", KR(ret));
@@ -1116,24 +1122,32 @@ int ObLoadDataDirectDemo::do_load()
         // }
         while (is_finish[idx] == 0) {
           idx = (idx + 1) % PARALLEL_LOAD_NUM;
-          ::usleep(10);
         }
         is_finish[idx] = 0;
         // prepare new_row
-        csv_parser_.copy_row(parallel_new_row[idx]); 
+        csv_parser_.copy_row(parallel_new_row[idx], idx); 
         is_ready[idx] = 1;
         idx = (idx + 1) % PARALLEL_LOAD_NUM;
+        row_num++;
       }
     }
   }
+  load_row_num_ = row_num;
   // wait thread pool all finish
   LOG_INFO("ObLoadDataDirectDemo wait thread pool all finish", KR(ret));
-  for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
-    LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
-    // while (is_finish[i] == 0) {
-      ::usleep(1000L * 1000L);
-    // }
-    // ::usleep(1000L * 1000L);
+  while (true) {
+    int64 cur_row_num = 0;
+    for (int i = 0; i < PARALLEL_LOAD_NUM; ++i) {
+      // LOG_INFO("ObLoadDataDirectDemo wait thread pool 1", KR(ret));
+      // while (is_finish[i] == 0) {
+      // }
+      // ::usleep(1000L * 1000L);
+      cur_row_num += parallel_external_sort_[i].row_num();
+    }
+    if (cur_row_num == row_num)
+      break;
+    ::usleep(1000L * 1000L);
+    _LOG_INFO("ObLoadDataDirectDemo wait thread pool %lld %lld", cur_row_num, row_num);
   }
   LOG_INFO("ObLoadDataDirectDemo thread pool stop", KR(ret));
   pool_.stop();
