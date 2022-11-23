@@ -722,6 +722,7 @@ int ObLoadSSTableWriter::init(const ObTableSchema *table_schema)
       datum_row_.mvcc_row_flag_.set_last_multi_version_row(true);
       datum_row_.storage_datums_[rowkey_column_num_].set_int(-1); // fill trans_version
       datum_row_.storage_datums_[rowkey_column_num_ + 1].set_int(0); // fill sql_no
+      MEMSET(writer_spin_lock_,0,sizeof(writer_spin_lock_));
       is_inited_ = true;
     }
   }
@@ -813,6 +814,42 @@ int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row)
     }
     if (OB_FAIL(macro_block_writers_[0].append_row(datum_row_))) {
       LOG_WARN("fail to append row", KR(ret));
+    }
+  }
+  return ret;
+}
+
+int ObLoadSSTableWriter::append_row_parallel(const ObLoadDatumRow &datum_row,const int64_t index)
+{
+  int ret = OB_SUCCESS;
+  if (IS_NOT_INIT) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("ObLoadSSTableWriter not init", KR(ret), KP(this));
+  } else if (OB_UNLIKELY(is_closed_)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("unexpected closed external sort", KR(ret));
+  } else if (index<0||index>=MACRO_PARALLEL_DEGREE) {
+    ret = OB_ERR_INVALID_ARGUMENT_FOR_WIDTH_BUCKET;
+    LOG_WARN("unexpected parallel index", KR(ret));
+  } else if (OB_UNLIKELY(!datum_row.is_valid() || datum_row.count_ != column_count_)) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid args", KR(ret), K(datum_row), K(column_count_));
+  } else {
+    for (int64_t i = 0; i < column_count_; ++i) {
+      if (i < rowkey_column_num_) {
+        datum_row_.storage_datums_[i] = datum_row.datums_[i];
+      } else {
+        datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
+      }
+    }
+    while(ATOMIC_CAS(writer_spin_lock_[index],false,true)){
+      PAUSE();
+    }
+    if (OB_FAIL(macro_block_writers_[index].append_row(datum_row_))) {
+      LOG_WARN("fail to append row", KR(ret));
+    }
+    while(ATOMIC_CAS(writer_spin_lock_[index],true,false)){
+      PAUSE();
     }
   }
   return ret;
