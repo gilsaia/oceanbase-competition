@@ -561,7 +561,7 @@ int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, co
  */
 
 ObLoadExternalSort::ObLoadExternalSort()
-  : allocator_(ObModIds::OB_SQL_LOAD_DATA), is_closed_(false), is_inited_(false)
+  : allocator_(ObModIds::OB_SQL_LOAD_DATA), is_inited_(false)
 {
 }
 
@@ -603,6 +603,8 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
           return ret;
         }
       }
+      MEMSET(is_closed_,0,sizeof(is_closed_));
+      MEMSET(external_sort_lock_,0,sizeof(external_sort_lock_));
       is_inited_ = true;
     }
   }
@@ -615,7 +617,7 @@ int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
-  } else if (OB_UNLIKELY(is_closed_)) {
+  } else if (OB_UNLIKELY(is_closed_[0])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else if (OB_FAIL(external_sorts_[0].add_item(datum_row))) {
@@ -624,19 +626,59 @@ int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
   return ret;
 }
 
+int ObLoadExternalSort::append_row_parallel(const ObLoadDatumRow &datum_row,const int64_t index)
+{
+  int ret = OB_SUCCESS;
+  if (IS_NOT_INIT) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
+  } else if (OB_UNLIKELY(is_closed_[0])) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("unexpected closed external sort", KR(ret));
+  } else {
+    while(ATOMIC_CAS(&external_sort_lock_[index],false,true)){
+      PAUSE();
+    }
+    if (OB_FAIL(external_sorts_[index].add_item(datum_row))) {
+      LOG_WARN("fail to add item", KR(ret));
+    }
+    while(ATOMIC_CAS(&external_sort_lock_[index],true,false)){
+      PAUSE();
+    }
+  }
+  return ret;  
+}
+
 int ObLoadExternalSort::close()
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
-  } else if (OB_UNLIKELY(is_closed_)) {
+  } else if (OB_UNLIKELY(is_closed_[0])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else if (OB_FAIL(external_sorts_[0].do_sort())) {
     LOG_WARN("fail to do sort", KR(ret));
   } else {
-    is_closed_ = true;
+    is_closed_[0] = true;
+  }
+  return ret;
+}
+
+int ObLoadExternalSort::close_parallel(const int64_t index)
+{
+  int ret = OB_SUCCESS;
+  if (IS_NOT_INIT) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
+  } else if (OB_UNLIKELY(is_closed_[index])) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("unexpected closed external sort", KR(ret));
+  } else if (OB_FAIL(external_sorts_[index].do_sort())) {
+    LOG_WARN("fail to do sort", KR(ret));
+  } else {
+    is_closed_[index] = true;
   }
   return ret;
 }
@@ -647,10 +689,25 @@ int ObLoadExternalSort::get_next_row(const ObLoadDatumRow *&datum_row)
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
-  } else if (OB_UNLIKELY(!is_closed_)) {
+  } else if (OB_UNLIKELY(!is_closed_[0])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected not closed external sort", KR(ret));
   } else if (OB_FAIL(external_sorts_[0].get_next_item(datum_row))) {
+    LOG_WARN("fail to get next item", KR(ret));
+  }
+  return ret;
+}
+
+int ObLoadExternalSort::get_next_row_parallel(const ObLoadDatumRow *&datum_row,const int64_t index)
+{
+  int ret = OB_SUCCESS;
+  if (IS_NOT_INIT) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
+  } else if (OB_UNLIKELY(!is_closed_[index])) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("unexpected not closed external sort", KR(ret));
+  } else if (OB_FAIL(external_sorts_[index].get_next_item(datum_row))) {
     LOG_WARN("fail to get next item", KR(ret));
   }
   return ret;
@@ -842,13 +899,13 @@ int ObLoadSSTableWriter::append_row_parallel(const ObLoadDatumRow &datum_row,con
         datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
       }
     }
-    while(ATOMIC_CAS(writer_spin_lock_[index],false,true)){
+    while(ATOMIC_CAS(&writer_spin_lock_[index],false,true)){
       PAUSE();
     }
     if (OB_FAIL(macro_block_writers_[index].append_row(datum_row_))) {
       LOG_WARN("fail to append row", KR(ret));
     }
-    while(ATOMIC_CAS(writer_spin_lock_[index],true,false)){
+    while(ATOMIC_CAS(&writer_spin_lock_[index],true,false)){
       PAUSE();
     }
   }

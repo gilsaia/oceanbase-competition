@@ -18,7 +18,7 @@ demo_file=/root/demo.csv
 sample_file=$HOME/sample.csv
 
 # obclient cmd
-ob_cmd="obclient -h 127.0.0.1 -P 6060 -u root -D oceanbase"
+ob_cmd="obclient -h 127.0.0.1 -P 2881 -u root -D oceanbase"
 
 # create table cmd
 create_table_cmd="create table lineitem_bulk ( \
