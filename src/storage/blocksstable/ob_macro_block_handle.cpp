@@ -147,6 +147,7 @@ int ObMacroBlockHandle::async_write(const ObMacroBlockWriteInfo &write_info)
   } else {
     ObIOInfo io_info;
     io_info.tenant_id_ = MTL_ID();
+    // io_info.tenant_id_ = 1;
     io_info.offset_ = write_info.offset_;
     io_info.size_ = write_info.size_;
     io_info.buf_ = write_info.buffer_;

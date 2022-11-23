@@ -155,13 +155,15 @@ private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
   ObLoadDatumRowCompare compare_;
-  storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
+  // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
+  storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
   bool is_closed_;
   bool is_inited_;
 };
 
 class ObLoadSSTableWriter
 {
+  static const int64_t MACRO_PARALLEL_DEGREE=4;
 public:
   ObLoadSSTableWriter();
   ~ObLoadSSTableWriter();
@@ -184,6 +186,7 @@ private:
   blocksstable::ObSSTableIndexBuilder sstable_index_builder_;
   blocksstable::ObDataStoreDesc data_store_desc_;
   blocksstable::ObMacroBlockWriter macro_block_writer_;
+  blocksstable::ObMacroBlockWriter macro_block_writers_[MACRO_PARALLEL_DEGREE];
   blocksstable::ObDatumRow datum_row_;
   bool is_closed_;
   bool is_inited_;

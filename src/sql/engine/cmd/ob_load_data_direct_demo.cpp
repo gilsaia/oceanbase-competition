@@ -624,7 +624,7 @@ int ObLoadExternalSort::close()
   } else if (OB_UNLIKELY(is_closed_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sort_.do_sort(true))) {
+  } else if (OB_FAIL(external_sort_.do_sort())) {
     LOG_WARN("fail to do sort", KR(ret));
   } else {
     is_closed_ = true;
@@ -766,10 +766,18 @@ int ObLoadSSTableWriter::init_macro_block_writer(const ObTableSchema *table_sche
     data_store_desc_.sstable_index_builder_ = &sstable_index_builder_;
   }
   if (OB_SUCC(ret)) {
-    ObMacroDataSeq data_seq;
-    if (OB_FAIL(macro_block_writer_.open(data_store_desc_, data_seq))) {
-      LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
+    for(int64_t i=0;i<MACRO_PARALLEL_DEGREE;++i){
+      ObMacroDataSeq data_seq;
+      if(OB_FAIL(data_seq.set_parallel_degree(i))){
+        LOG_WARN("fail to set data seq parallel degree",KR(ret),K(data_seq));
+      }else if(OB_FAIL(macro_block_writers_[i].open(data_store_desc_,data_seq))){
+        LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
+      }
     }
+    // ObMacroDataSeq data_seq;
+    // if (OB_FAIL(macro_block_writer_.open(data_store_desc_, data_seq))) {
+    //   LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
+    // }
   }
   return ret;
 }
@@ -794,7 +802,7 @@ int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row)
         datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
       }
     }
-    if (OB_FAIL(macro_block_writer_.append_row(datum_row_))) {
+    if (OB_FAIL(macro_block_writers_[0].append_row(datum_row_))) {
       LOG_WARN("fail to append row", KR(ret));
     }
   }
@@ -880,9 +888,15 @@ int ObLoadSSTableWriter::close()
     LOG_WARN("unexpected closed sstable writer", KR(ret));
   } else {
     ObSSTable *sstable = nullptr;
-    if (OB_FAIL(macro_block_writer_.close())) {
-      LOG_WARN("fail to close macro block writer", KR(ret));
-    } else if (OB_FAIL(create_sstable())) {
+    for(int64_t i=0;i<MACRO_PARALLEL_DEGREE;++i){
+      if(OB_FAIL(macro_block_writers_[i].close())){
+        LOG_WARN("fail to close macro block writer",KR(ret));
+      }
+    }
+    // if (OB_FAIL(macro_block_writer_.close())) {
+    //   LOG_WARN("fail to close macro block writer", KR(ret));
+    // } else if (OB_FAIL(create_sstable())) {
+    if(OB_FAIL(create_sstable())){
       LOG_WARN("fail to create sstable", KR(ret));
     } else {
       is_closed_ = true;

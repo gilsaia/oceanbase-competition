@@ -1,0 +1,4 @@
+perf record
+[ perf record: Woken up 182 times to write data ]
+[ perf record: Captured and wrote 2.636 MB perf.data (9462 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 15543 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
