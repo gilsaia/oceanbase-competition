@@ -191,7 +191,7 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
     const char *str = buffer.begin();
     const char *end = buffer.end();
     int64_t nrows = 1;
-    if (OB_FAIL(csv_parser_.scan_simple(str, end, nrows, nullptr, nullptr, unused_row_handler_,
+    if (OB_FAIL(csv_parser_.scan(str, end, nrows, nullptr, nullptr, unused_row_handler_,
                                  err_records_, false))) {
       LOG_WARN("fail to scan buffer", KR(ret));
     } else if (OB_UNLIKELY(!err_records_.empty())) {
