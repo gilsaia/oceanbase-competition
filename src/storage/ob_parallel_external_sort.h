@@ -1501,7 +1501,7 @@ int ObFragmentMergeBuffer<T, Compare>::add_item(const T &item)
     }
     produce_cursor_ = (produce_cursor_ + 1) % BUFFER_NUM;
     allocator = allocators_[produce_cursor_];
-    while (allocator->used() + item_size > buf_limit_) {
+    while (produce_cursor_ == consume_cursor_) {
       LOG_INFO("all allocators are full, wait");
       usleep(100);
     }
