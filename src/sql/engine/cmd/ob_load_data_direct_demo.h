@@ -150,7 +150,7 @@ private:
 
 class ObLoadExternalSort
 {
-  static const int64_t EXTERNAL_PARALLEL_DEGREE = LOAD_THREAD_NUM;
+  static const int64_t EXTERNAL_PARALLEL_DEGREE = 1;
 public:
   ObLoadExternalSort();
   ~ObLoadExternalSort();
@@ -166,9 +166,9 @@ private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
   ObLoadDatumRowCompare compare_;
-  // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
+  storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   // storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
-  storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
+  // storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   bool is_closed_[EXTERNAL_PARALLEL_DEGREE];
   bool is_inited_;
   bool external_sort_lock_[EXTERNAL_PARALLEL_DEGREE];
@@ -222,7 +222,8 @@ public:
   ObLoadRowCaster row_caster_[READ_PARALLEL_DEGREE];
   bool is_finish[READ_PARALLEL_DEGREE];
   bool is_writed[READ_PARALLEL_DEGREE];
-  ObLoadExternalSort external_sort_;
+  ObLoadExternalSort external_sort_[READ_PARALLEL_DEGREE];
+  bool external_sort_lock_[READ_PARALLEL_DEGREE];
   ObLoadSSTableWriter sstable_writer_;
   common::ObArenaAllocator allocator_;
   int64_t pviot_;

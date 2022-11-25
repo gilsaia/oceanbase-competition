@@ -676,7 +676,7 @@ int ObLoadExternalSort::close()
   } else if (OB_UNLIKELY(is_closed_[0])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sorts_[0].do_sort())) {
+  } else if (OB_FAIL(external_sorts_[0].do_sort(true))) {
     LOG_WARN("fail to do sort", KR(ret));
   } else {
     is_closed_[0] = true;
@@ -693,7 +693,7 @@ int ObLoadExternalSort::close_parallel(const int64_t index)
   } else if (OB_UNLIKELY(is_closed_[index])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
-  } else if (OB_FAIL(external_sorts_[index].do_sort())) {
+  } else if (OB_FAIL(external_sorts_[index].do_sort(true))) {
     LOG_WARN("fail to do sort", KR(ret));
   } else {
     is_closed_[index] = true;
@@ -1162,6 +1162,7 @@ int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
   for (int i = 0; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
     is_finish[i] = false;
     is_writed[i] = false;
+    external_sort_lock_[i] = false;
     // init csv_parser_
     if (OB_FAIL(csv_parser_[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
                                       load_args.file_cs_type_))) {
@@ -1179,14 +1180,18 @@ int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
     else if (OB_FAIL(row_caster_[i].init(table_schema, field_or_var_list))) {
       LOG_WARN("fail to init row caster", KR(ret));
     }
+    // init external_sort_
+     if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
+      LOG_WARN("fail to init row caster", KR(ret));
+    }
   }
   
   // init external_sort_
-  if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
-    LOG_WARN("fail to init row caster", KR(ret));
-  }
+  // if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
+  //   LOG_WARN("fail to init row caster", KR(ret));
+  // }
   // init sstable_writer_
-  else if (OB_FAIL(sstable_writer_.init(table_schema))) {
+  if (OB_FAIL(sstable_writer_.init(table_schema))) {
     LOG_WARN("fail to init sstable writer", KR(ret));
   }
   LOG_INFO("ObLoadThreadPool pool init finish", KR(ret));
@@ -1241,8 +1246,14 @@ void ObLoadThreadPool::run(int64_t idx)
         }
         ++cur_row;
         // _LOG_INFO("ObLoadThreadPool thread idx %ld, key value %ld sort_idx %d", idx, row_caster_[idx].key_value_, sort_idx);
-        if (OB_FAIL(external_sort_.append_row_parallel(*datum_row, sort_idx))) {
+        while(!ATOMIC_BCAS(&external_sort_lock_[sort_idx], false, true)) {
+          PAUSE();
+        }
+        if (OB_FAIL(external_sort_[sort_idx].append_row(*datum_row))) {
           LOG_WARN("fail to append row", KR(ret));
+        }
+        while(!ATOMIC_BCAS(&external_sort_lock_[sort_idx], true, false)) {
+          PAUSE();
         }
       }
     }
@@ -1255,23 +1266,30 @@ void ObLoadThreadPool::run(int64_t idx)
     }
   }
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_.close_parallel(idx))) {
+    if (OB_FAIL(external_sort_[idx].close())) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
   int write_row = 0;
+  int64_t last_key = -1;
   while (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_.get_next_row_parallel(datum_row, idx))) {
+    if (OB_FAIL(external_sort_[idx].get_next_row(datum_row))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
       } else {
         ret = OB_SUCCESS;
         break;
       }
-    } else if (OB_FAIL(sstable_writer_.append_row_parallel(*datum_row, idx))) {
+    }
+    int64_t cur_key = datum_row->datums_[0].get_int();
+    if (cur_key < last_key) {
+      _LOG_INFO("ObLoadThreadPool thread idx %ld, row num %d, new %ld < old %ld order error !!!!!", idx, write_row, cur_key, last_key);
+    }
+    if (OB_FAIL(sstable_writer_.append_row_parallel(*datum_row, idx))) {
       LOG_WARN("fail to append row", KR(ret));
     }
-    if (write_row % 1000 == 0) {
+    last_key = cur_key;
+    if (write_row % 10000 == 0) {
       _LOG_INFO("ObLoadThreadPool thread idx %ld, write_row %d, write key value (%ld, %d)", idx, write_row, datum_row->datums_[0].get_int(), datum_row->datums_[1].get_int32());
     }
     ++write_row;
