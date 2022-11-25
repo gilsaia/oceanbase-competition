@@ -8,11 +8,13 @@
 #include "storage/blocksstable/ob_index_block_builder.h"
 #include "storage/ob_parallel_external_sort.h"
 #include "storage/tx_storage/ob_ls_handle.h"
+#include "lib/queue/ob_lighty_queue.h"
 
 namespace oceanbase
 {
 namespace sql
 {
+#define LOAD_THREAD_NUM 4
 
 class ObLoadDataBuffer
 {
@@ -45,9 +47,11 @@ public:
   ObLoadSequentialFileReader();
   ~ObLoadSequentialFileReader();
   int open(const ObString &filepath);
+  int open_parallel(const ObString &filepath, int64_t start, int64_t end);
   int read_next_buffer(ObLoadDataBuffer &buffer);
 private:
   common::ObFileReader file_reader_;
+  int64_t end_; // no allow read arrive end_
   int64_t offset_;
   bool is_read_end_;
 };
@@ -131,6 +135,8 @@ private:
     const common::ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list);
   int cast_obj_to_datum(const share::schema::ObColumnSchemaV2 *column_schema,
                         const common::ObObj &obj, blocksstable::ObStorageDatum &datum);
+public:  
+  int64_t key_value_;
 private:
   common::ObArray<const share::schema::ObColumnSchemaV2 *> column_schemas_;
   common::ObArray<int64_t> column_idxs_; // Mapping of store columns to source data columns
@@ -144,7 +150,7 @@ private:
 
 class ObLoadExternalSort
 {
-  static const int64_t EXTERNAL_PARALLEL_DEGREE=4;
+  static const int64_t EXTERNAL_PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
   ObLoadExternalSort();
   ~ObLoadExternalSort();
@@ -170,14 +176,15 @@ private:
 
 class ObLoadSSTableWriter
 {
-  static const int64_t MACRO_PARALLEL_DEGREE=4;
+  static const int64_t MACRO_PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
   ObLoadSSTableWriter();
   ~ObLoadSSTableWriter();
   int init(const share::schema::ObTableSchema *table_schema);
   int append_row(const ObLoadDatumRow &datum_row);
-  int append_row_parallel(const ObLoadDatumRow &datum_row,const int64_t index);
+  int append_row_parallel(const ObLoadDatumRow &datum_row, const int64_t index);
   int close();
+  bool is_close() { return is_closed_; }
 private:
   int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);
   int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);
@@ -196,15 +203,41 @@ private:
   // blocksstable::ObMacroBlockWriter macro_block_writer_;
   blocksstable::ObMacroBlockWriter macro_block_writers_[MACRO_PARALLEL_DEGREE];
   blocksstable::ObDatumRow datum_row_;
+  blocksstable::ObDatumRow datum_rows_[MACRO_PARALLEL_DEGREE];
   bool writer_spin_lock_[MACRO_PARALLEL_DEGREE];
   bool is_closed_;
   bool is_inited_;
+};
+
+class ObLoadThreadPool : public share::ObThreadPool
+{
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
+  static const int64_t READ_PARALLEL_DEGREE = LOAD_THREAD_NUM;
+public:
+  int64_t file_offsets_[READ_PARALLEL_DEGREE + 1];
+  ObLoadCSVPaser csv_parser_[READ_PARALLEL_DEGREE];
+  ObLoadSequentialFileReader file_reader_[READ_PARALLEL_DEGREE];
+  ObLoadDataBuffer buffer_[READ_PARALLEL_DEGREE];
+  ObLoadRowCaster row_caster_[READ_PARALLEL_DEGREE];
+  bool is_finish[READ_PARALLEL_DEGREE];
+  bool is_writed[READ_PARALLEL_DEGREE];
+  ObLoadExternalSort external_sort_;
+  ObLoadSSTableWriter sstable_writer_;
+  common::ObArenaAllocator allocator_;
+  int64_t pviot_;
+  
+  int init_file_offset(const ObString &filepath);
+  int init(ObLoadDataStmt &load_stmt);
+  void run(int64_t idx) final;
+  int finish();
 };
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
+  static const int64_t PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
@@ -213,12 +246,7 @@ private:
   int inner_init(ObLoadDataStmt &load_stmt);
   int do_load();
 private:
-  ObLoadCSVPaser csv_parser_;
-  ObLoadSequentialFileReader file_reader_;
-  ObLoadDataBuffer buffer_;
-  ObLoadRowCaster row_caster_;
-  ObLoadExternalSort external_sort_;
-  ObLoadSSTableWriter sstable_writer_;
+  ObLoadThreadPool pool_;
 };
 
 } // namespace sql

@@ -108,6 +108,17 @@ int ObLoadSequentialFileReader::open(const ObString &filepath)
   return ret;
 }
 
+int ObLoadSequentialFileReader::open_parallel(const ObString &filepath, int64_t start, int64_t end)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(file_reader_.open(filepath, false))) {
+    LOG_WARN("fail to open file", KR(ret));
+  }
+  offset_ = start;
+  end_ = end;
+  return ret;
+}
+
 int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
 {
   int ret = OB_SUCCESS;
@@ -118,8 +129,12 @@ int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
     ret = OB_ITER_END;
   } else if (OB_LIKELY(buffer.get_remain_size() > 0)) {
     const int64_t buffer_remain_size = buffer.get_remain_size();
+    int64_t max_read_size = buffer_remain_size;
+    if (end_ != -1) {
+      max_read_size = min(max_read_size, end_ - offset_);
+    }
     int64_t read_size = 0;
-    if (OB_FAIL(file_reader_.pread(buffer.end(), buffer_remain_size, offset_, read_size))) {
+    if (OB_FAIL(file_reader_.pread(buffer.end(), max_read_size, offset_, read_size))) {
       LOG_WARN("fail to do pread", KR(ret));
     } else if (read_size == 0) {
       is_read_end_ = true;
@@ -516,6 +531,9 @@ int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRo
         if (OB_FAIL(cast_obj_to_datum(column_schema, src_obj, dest_datum))) {
           LOG_WARN("fail to cast obj to datum", KR(ret), K(src_obj));
         }
+        if (column_idx == 0) {
+          this->key_value_ = dest_datum.get_int();
+        }
       }
     }
     if (OB_SUCC(ret)) {
@@ -603,8 +621,8 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
           return ret;
         }
       }
-      MEMSET(is_closed_,0,sizeof(is_closed_));
-      MEMSET(external_sort_lock_,0,sizeof(external_sort_lock_));
+      MEMSET(is_closed_, 0, sizeof(is_closed_));
+      MEMSET(external_sort_lock_, 0, sizeof(external_sort_lock_));
       is_inited_ = true;
     }
   }
@@ -636,13 +654,13 @@ int ObLoadExternalSort::append_row_parallel(const ObLoadDatumRow &datum_row,cons
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else {
-    while(ATOMIC_CAS(&external_sort_lock_[index],false,true)){
+    while(!ATOMIC_BCAS(&external_sort_lock_[index], false, true)) {
       PAUSE();
     }
     if (OB_FAIL(external_sorts_[index].add_item(datum_row))) {
       LOG_WARN("fail to add item", KR(ret));
     }
-    while(ATOMIC_CAS(&external_sort_lock_[index],true,false)){
+    while(!ATOMIC_BCAS(&external_sort_lock_[index], true, false)) {
       PAUSE();
     }
   }
@@ -782,6 +800,16 @@ int ObLoadSSTableWriter::init(const ObTableSchema *table_schema)
       MEMSET(writer_spin_lock_,0,sizeof(writer_spin_lock_));
       is_inited_ = true;
     }
+    for (int i = 0; i < MACRO_PARALLEL_DEGREE; ++i) {
+      if (OB_FAIL(datum_rows_[i].init(column_count_ + extra_rowkey_column_num_))) {
+        LOG_WARN("fail to init datum row", KR(ret));
+      } else {
+        datum_rows_[i].row_flag_.set_flag(ObDmlFlag::DF_INSERT);
+        datum_rows_[i].mvcc_row_flag_.set_last_multi_version_row(true);
+        datum_rows_[i].storage_datums_[rowkey_column_num_].set_int(-1); // fill trans_version
+        datum_rows_[i].storage_datums_[rowkey_column_num_ + 1].set_int(0); // fill sql_no
+      }
+    }
   }
   return ret;
 }
@@ -894,18 +922,18 @@ int ObLoadSSTableWriter::append_row_parallel(const ObLoadDatumRow &datum_row,con
   } else {
     for (int64_t i = 0; i < column_count_; ++i) {
       if (i < rowkey_column_num_) {
-        datum_row_.storage_datums_[i] = datum_row.datums_[i];
+        datum_rows_[index].storage_datums_[i] = datum_row.datums_[i];
       } else {
-        datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
+        datum_rows_[index].storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
       }
     }
-    while(ATOMIC_CAS(&writer_spin_lock_[index],false,true)){
+    while(!ATOMIC_BCAS(&writer_spin_lock_[index],false,true)){
       PAUSE();
     }
-    if (OB_FAIL(macro_block_writers_[index].append_row(datum_row_))) {
+    if (OB_FAIL(macro_block_writers_[index].append_row(datum_rows_[index]))) {
       LOG_WARN("fail to append row", KR(ret));
     }
-    while(ATOMIC_CAS(&writer_spin_lock_[index],true,false)){
+    while(!ATOMIC_BCAS(&writer_spin_lock_[index],true,false)){
       PAUSE();
     }
   }
@@ -983,6 +1011,9 @@ int ObLoadSSTableWriter::create_sstable()
 int ObLoadSSTableWriter::close()
 {
   int ret = OB_SUCCESS;
+  if (is_closed_) {
+    return ret;
+  }
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadSSTableWriter not init", KR(ret), KP(this));
@@ -991,7 +1022,7 @@ int ObLoadSSTableWriter::close()
     LOG_WARN("unexpected closed sstable writer", KR(ret));
   } else {
     ObSSTable *sstable = nullptr;
-    for(int64_t i=0;i<MACRO_PARALLEL_DEGREE;++i){
+    for(int64_t i = 0; i < MACRO_PARALLEL_DEGREE; ++i){
       if(OB_FAIL(macro_block_writers_[i].close())){
         LOG_WARN("fail to close macro block writer",KR(ret));
       }
@@ -1005,6 +1036,7 @@ int ObLoadSSTableWriter::close()
       is_closed_ = true;
     }
   }
+  _LOG_INFO("ObLoadThreadPool ObLoadSSTableWriter closed finish");
   return ret;
 }
 
@@ -1034,6 +1066,75 @@ int ObLoadDataDirectDemo::execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
 {
   int ret = OB_SUCCESS;
+  if (OB_FAIL(pool_.init(load_stmt))) {
+    LOG_WARN("fail to pool init", KR(ret));
+  }
+  pool_.set_thread_count(PARALLEL_DEGREE);
+  pool_.set_run_wrapper(MTL_CTX());
+  return ret;
+}
+
+int ObLoadDataDirectDemo::do_load()
+{
+  int ret = OB_SUCCESS;
+  pool_.start();
+  pool_.finish();
+  return ret;
+}
+
+int ObLoadThreadPool::init_file_offset(const ObString &filepath)
+{
+  int ret = OB_SUCCESS;
+  int fd = -1;
+  int64_t size = 0;
+  int64_t read_size = 256;
+  int64_t pos = 0;
+  char *buf;
+  // open file
+  if(-1 == (fd = open(filepath.ptr(), O_RDONLY, 0777))){
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("fail to open file", K(filepath), K(fd));
+  } else if(NULL == (buf = static_cast<char *>(allocator_.alloc(read_size)))){
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+    LOG_WARN("fail to allocator memory", K(size), K(ret));
+  }
+  if (ret != OB_SUCCESS) {
+    return ret;
+  }
+  // calc offset
+  size = common::get_file_size(fd);
+  int64_t temp = size / READ_PARALLEL_DEGREE;
+  file_offsets_[0] = 0;
+  for (int i = 1; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
+    file_offsets_[i] = file_offsets_[i - 1] + temp;
+    lseek(fd, file_offsets_[i], SEEK_SET);
+    if (read_size != read(fd, buf, read_size)){
+      ret = OB_ERR_UNEXPECTED; 
+    }
+    int offset = 0;
+    while (offset < read_size && buf[offset] != '\n') {
+      ++offset;
+    }
+    if (offset == read_size) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("no find, read size is small", K(read_size));
+    }
+    file_offsets_[i] += (offset + 1);
+  }
+  file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
+  int64_t min_key = 10000000;
+  int64_t max_key = 300000000;
+  pviot_ = min_key + (max_key - min_key) / READ_PARALLEL_DEGREE + 1;
+  for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
+    _LOG_INFO("ObLoadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
+  }
+  close(fd);
+  return ret;
+}
+
+int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
+{
+  int ret = common::OB_SUCCESS;
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
   const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
     load_stmt.get_field_or_var_list();
@@ -1049,100 +1150,152 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   } else if (OB_ISNULL(table_schema)) {
     ret = OB_TABLE_NOT_EXIST;
     LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
-  }else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
+  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
     LOG_WARN("fail to set compressor none", KR(ret));
-  }else if (OB_UNLIKELY(table_schema->is_heap_table())) {
+  } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
     ret = OB_NOT_SUPPORTED;
     LOG_WARN("not support heap table", KR(ret));
+  } else if (OB_FAIL(init_file_offset(load_args.full_file_path_))) {
+    LOG_WARN("fail to init file offset", KR(ret));
   }
-  // init csv_parser_
-  else if (OB_FAIL(csv_parser_.init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
-                                    load_args.file_cs_type_))) {
-    LOG_WARN("fail to init csv parser", KR(ret));
+
+  for (int i = 0; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
+    is_finish[i] = false;
+    is_writed[i] = false;
+    // init csv_parser_
+    if (OB_FAIL(csv_parser_[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
+                                      load_args.file_cs_type_))) {
+      LOG_WARN("fail to init csv parser", KR(ret));
+    }
+    // init file_reader_
+    else if (OB_FAIL(file_reader_[i].open_parallel(load_args.full_file_path_, file_offsets_[i], file_offsets_[i + 1]))) {
+      LOG_WARN("fail to open file", KR(ret), K(load_args.full_file_path_));
+    }
+    // init buffer_
+    else if (OB_FAIL(buffer_[i].create(FILE_BUFFER_SIZE))) {
+      LOG_WARN("fail to create buffer", KR(ret));
+    }
+    // init row_caster_
+    else if (OB_FAIL(row_caster_[i].init(table_schema, field_or_var_list))) {
+      LOG_WARN("fail to init row caster", KR(ret));
+    }
   }
-  // init file_reader_
-  else if (OB_FAIL(file_reader_.open(load_args.full_file_path_))) {
-    LOG_WARN("fail to open file", KR(ret), K(load_args.full_file_path_));
-  }
-  // init buffer_
-  else if (OB_FAIL(buffer_.create(FILE_BUFFER_SIZE))) {
-    LOG_WARN("fail to create buffer", KR(ret));
-  }
-  // init row_caster_
-  else if (OB_FAIL(row_caster_.init(table_schema, field_or_var_list))) {
-    LOG_WARN("fail to init row caster", KR(ret));
-  }
+  
   // init external_sort_
-  else if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE))) {
+  if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
     LOG_WARN("fail to init row caster", KR(ret));
   }
   // init sstable_writer_
   else if (OB_FAIL(sstable_writer_.init(table_schema))) {
     LOG_WARN("fail to init sstable writer", KR(ret));
   }
+  LOG_INFO("ObLoadThreadPool pool init finish", KR(ret));
   return ret;
 }
 
-int ObLoadDataDirectDemo::do_load()
+void ObLoadThreadPool::run(int64_t idx)
 {
+  LOG_INFO("ObLoadThreadPool thread init start");
+  common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
+  share::ObTenantBase *tenant_base = MTL_CTX();
+  lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
+  lib::Worker::set_compatibility_mode(mode);
+  LOG_INFO("ObLoadThreadPool thread init finish");
   int ret = OB_SUCCESS;
+  int cur_row = 0;
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
   while (OB_SUCC(ret)) {
-    if (OB_FAIL(buffer_.squash())) {
+    if (OB_FAIL(buffer_[idx].squash())) {
       LOG_WARN("fail to squash buffer", KR(ret));
-    } else if (OB_FAIL(file_reader_.read_next_buffer(buffer_))) {
+    } else if (OB_FAIL(file_reader_[idx].read_next_buffer(buffer_[idx]))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to read next buffer", KR(ret));
       } else {
-        if (OB_UNLIKELY(!buffer_.empty())) {
+        if (OB_UNLIKELY(!buffer_[idx].empty())) {
           ret = OB_ERR_UNEXPECTED;
           LOG_WARN("unexpected incomplate data", KR(ret));
         }
         ret = OB_SUCCESS;
         break;
       }
-    } else if (OB_UNLIKELY(buffer_.empty())) {
+    } else if (OB_UNLIKELY(buffer_[idx].empty())) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("unexpected empty buffer", KR(ret));
     } else {
       while (OB_SUCC(ret)) {
-        if (OB_FAIL(csv_parser_.get_next_row(buffer_, new_row))) {
+        // _LOG_INFO("ObLoadThreadPool thread idx %ld, get_next_row", idx);
+        if (OB_FAIL(csv_parser_[idx].get_next_row(buffer_[idx], new_row))) {
           if (OB_UNLIKELY(OB_ITER_END != ret)) {
             LOG_WARN("fail to get next row", KR(ret));
           } else {
             ret = OB_SUCCESS;
             break;
           }
-        } else if (OB_FAIL(row_caster_.get_casted_row(*new_row, datum_row))) {
+        } else if (OB_FAIL(row_caster_[idx].get_casted_row(*new_row, datum_row))) {
           LOG_WARN("fail to cast row", KR(ret));
-        } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {
+        }
+        int sort_idx = row_caster_[idx].key_value_ / pviot_;
+        if (sort_idx >= READ_PARALLEL_DEGREE) {
+          sort_idx = READ_PARALLEL_DEGREE - 1;
+        }
+        ++cur_row;
+        // _LOG_INFO("ObLoadThreadPool thread idx %ld, key value %ld sort_idx %d", idx, row_caster_[idx].key_value_, sort_idx);
+        if (OB_FAIL(external_sort_.append_row_parallel(*datum_row, sort_idx))) {
           LOG_WARN("fail to append row", KR(ret));
         }
       }
     }
   }
+  _LOG_INFO("ObLoadThreadPool thread %ld read row num %d finish", idx, cur_row);
+  is_finish[idx] = true;
+  for (int i = 0; i < READ_PARALLEL_DEGREE; i++) {
+    while (is_finish[i] == false) {
+      ::usleep(100);
+    }
+  }
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_.close())) {
+    if (OB_FAIL(external_sort_.close_parallel(idx))) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
+  int write_row = 0;
   while (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_.get_next_row(datum_row))) {
+    if (OB_FAIL(external_sort_.get_next_row_parallel(datum_row, idx))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
       } else {
         ret = OB_SUCCESS;
         break;
       }
-    } else if (OB_FAIL(sstable_writer_.append_row(*datum_row))) {
+    } else if (OB_FAIL(sstable_writer_.append_row_parallel(*datum_row, idx))) {
       LOG_WARN("fail to append row", KR(ret));
+    }
+    if (write_row % 1000 == 0) {
+      _LOG_INFO("ObLoadThreadPool thread idx %ld, write_row %d, write key value (%ld, %d)", idx, write_row, datum_row->datums_[0].get_int(), datum_row->datums_[1].get_int32());
+    }
+    ++write_row;
+  }
+  _LOG_INFO("ObLoadThreadPool thread %ld end write, row num %d", idx, write_row);
+  is_writed[idx] = true;
+  for (int i = 0; i < READ_PARALLEL_DEGREE; i++) {
+    while (is_writed[i] == false) {
+      ::usleep(100);
     }
   }
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(sstable_writer_.close())) {
+    if (idx == 0 && OB_FAIL(sstable_writer_.close())) {
       LOG_WARN("fail to close sstable writer", KR(ret));
     }
+  }
+  _LOG_INFO("ObLoadThreadPool thread %ld close sstable_writer_", idx);
+}
+
+int ObLoadThreadPool::finish() 
+{
+  int ret = OB_SUCCESS;
+  while (!sstable_writer_.is_close()) {
+    usleep(100);
   }
   return ret;
 }
