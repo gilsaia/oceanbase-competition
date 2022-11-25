@@ -632,7 +632,7 @@ int ObLoadExternalSort::append_row_parallel(const ObLoadDatumRow &datum_row,cons
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
-  } else if (OB_UNLIKELY(is_closed_[0])) {
+  } else if (OB_UNLIKELY(is_closed_[index])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else {
