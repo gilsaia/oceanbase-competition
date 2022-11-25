@@ -445,7 +445,6 @@ int ObCSVGeneralParser::scan_proto_simple(const char *&str,
 
 
   while (OB_SUCC(ret) && str < end && line_no < nrows) {
-    char *escape_buf_pos = escape_buf;
     bool find_new_line = false;
     int field_idx = 0;
 
@@ -461,15 +460,10 @@ int ObCSVGeneralParser::scan_proto_simple(const char *&str,
           bool is_valid_escape = (1 == mbcharlen<cs_type>(next, end));
           str += (OB_LIKELY(is_valid_escape) ? 2 : 1);  
         } else {
-          is_field_term = (*str == opt_param_.field_term_c_
-              && str <= end - format_.field_term_str_.length()
-              && 0 == MEMCMP(str, format_.field_term_str_.ptr(), format_.field_term_str_.length()));
+          is_field_term = *str == opt_param_.field_term_c_;
 
-          is_line_term = (*str == opt_param_.line_term_c_
-              && str <= end - format_.line_term_str_.length()
-              && 0 == MEMCMP(str, format_.line_term_str_.ptr(), format_.line_term_str_.length()));
-
-          //if field is enclosed, there is a enclose char just before the terminate string
+          is_line_term = *str == opt_param_.line_term_c_;
+          
           is_term = (is_field_term || is_line_term);
 
           if (!is_term) {
