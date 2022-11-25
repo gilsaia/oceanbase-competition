@@ -636,13 +636,13 @@ int ObLoadExternalSort::append_row_parallel(const ObLoadDatumRow &datum_row,cons
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else {
-    while(ATOMIC_CAS(&external_sort_lock_[index],false,true)){
+    while(!ATOMIC_BCAS(&external_sort_lock_[index],false,true)){
       PAUSE();
     }
     if (OB_FAIL(external_sorts_[index].add_item(datum_row))) {
       LOG_WARN("fail to add item", KR(ret));
     }
-    while(ATOMIC_CAS(&external_sort_lock_[index],true,false)){
+    while(!ATOMIC_BCAS(&external_sort_lock_[index],true,false)){
       PAUSE();
     }
   }
@@ -899,13 +899,13 @@ int ObLoadSSTableWriter::append_row_parallel(const ObLoadDatumRow &datum_row,con
         datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
       }
     }
-    while(ATOMIC_CAS(&writer_spin_lock_[index],false,true)){
+    while(!ATOMIC_BCAS(&writer_spin_lock_[index],false,true)){
       PAUSE();
     }
     if (OB_FAIL(macro_block_writers_[index].append_row(datum_row_))) {
       LOG_WARN("fail to append row", KR(ret));
     }
-    while(ATOMIC_CAS(&writer_spin_lock_[index],true,false)){
+    while(!ATOMIC_BCAS(&writer_spin_lock_[index],true,false)){
       PAUSE();
     }
   }
