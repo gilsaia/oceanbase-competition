@@ -1122,7 +1122,7 @@ int ObLoadThreadPool::init_file_offset(const ObString &filepath)
     file_offsets_[i] += (offset + 1);
   }
   file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
-  int64_t min_key = 10000000;
+  int64_t min_key = 0;
   int64_t max_key = 300000000;
   pviot_ = min_key + (max_key - min_key) / READ_PARALLEL_DEGREE + 1;
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
@@ -1271,7 +1271,6 @@ void ObLoadThreadPool::run(int64_t idx)
     }
   }
   int write_row = 0;
-  int64_t last_key = -1;
   while (OB_SUCC(ret)) {
     if (OB_FAIL(external_sort_[idx].get_next_row(datum_row))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
@@ -1281,16 +1280,8 @@ void ObLoadThreadPool::run(int64_t idx)
         break;
       }
     }
-    int64_t cur_key = datum_row->datums_[0].get_int();
-    if (cur_key < last_key) {
-      _LOG_INFO("ObLoadThreadPool thread idx %ld, row num %d, new %ld < old %ld order error !!!!!", idx, write_row, cur_key, last_key);
-    }
     if (OB_FAIL(sstable_writer_.append_row_parallel(*datum_row, idx))) {
       LOG_WARN("fail to append row", KR(ret));
-    }
-    last_key = cur_key;
-    if (write_row % 10000 == 0) {
-      _LOG_INFO("ObLoadThreadPool thread idx %ld, write_row %d, write key value (%ld, %d)", idx, write_row, datum_row->datums_[0].get_int(), datum_row->datums_[1].get_int32());
     }
     ++write_row;
   }

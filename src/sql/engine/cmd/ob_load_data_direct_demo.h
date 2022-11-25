@@ -14,7 +14,7 @@ namespace oceanbase
 {
 namespace sql
 {
-#define LOAD_THREAD_NUM 4
+#define LOAD_THREAD_NUM 6
 
 class ObLoadDataBuffer
 {
