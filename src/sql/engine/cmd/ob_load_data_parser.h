@@ -467,8 +467,9 @@ int ObCSVGeneralParser::scan_proto_simple(const char *&str,
           is_term = (is_field_term || is_line_term);
 
           if (!is_term) {
-            int mb_len = mbcharlen<cs_type>(str, end);
-            str += mb_len;
+            ++str;
+            // int mb_len = mbcharlen<cs_type>(str, end);
+            // str += mb_len;
           }
         }
       }
@@ -476,7 +477,8 @@ int ObCSVGeneralParser::scan_proto_simple(const char *&str,
       if (OB_LIKELY(is_term) || is_end_file) {
         const char *field_end = str;
         if (OB_LIKELY(is_term)) {
-          str += is_field_term ? format_.field_term_str_.length() : format_.line_term_str_.length();
+          ++str;
+          // str += is_field_term ? format_.field_term_str_.length() : format_.line_term_str_.length();
         } else {
           str = end;
         }
