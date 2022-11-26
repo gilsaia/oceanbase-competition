@@ -179,7 +179,7 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
   if (IS_INIT) {
     ret = OB_INIT_TWICE;
     LOG_WARN("ObLoadCSVPaser init twice", KR(ret), KP(this));
-  } else if (OB_FAIL(csv_parser_.init(format, column_count*PASER_CACHE_SIZE, collation_type))) {
+  } else if (OB_FAIL(csv_parser_.init(format, column_count, collation_type,PASER_CACHE_SIZE))) {
     LOG_WARN("fail to init csv parser", KR(ret));
   } else {
     allocator_.set_tenant_id(MTL_ID());

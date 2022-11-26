@@ -86,7 +86,8 @@ public:
   ObCSVGeneralParser() {}
   int init(const ObDataInFileStruct &format,
            int64_t file_column_nums,
-           common::ObCollationType file_cs_type);
+           common::ObCollationType file_cs_type,
+           int64_t line_size=1);
   const ObCSVGeneralFormat &get_format() { return format_; }
   const OptParams &get_opt_params() { return opt_param_; }
 
