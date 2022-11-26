@@ -58,6 +58,7 @@ private:
 
 class ObLoadCSVPaser
 {
+int64_t PASER_CACHE_LINE=5;
 public:
   ObLoadCSVPaser();
   ~ObLoadCSVPaser();
