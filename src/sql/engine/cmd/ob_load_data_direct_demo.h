@@ -58,6 +58,7 @@ private:
 
 class ObLoadCSVPaser
 {
+  static const int64_t PASER_CACHE_SIZE=10;
 public:
   ObLoadCSVPaser();
   ~ObLoadCSVPaser();
@@ -82,6 +83,8 @@ private:
   UnusedRowHandler unused_row_handler_;
   common::ObSEArray<ObCSVGeneralParser::LineErrRec, 1> err_records_;
   bool is_inited_;
+  int64_t cache_offset_;
+  int64_t total_rows_;
 };
 
 class ObLoadDatumRow

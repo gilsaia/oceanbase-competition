@@ -167,6 +167,8 @@ void ObLoadCSVPaser::reset()
   collation_type_ = CS_TYPE_INVALID;
   row_.reset();
   err_records_.reset();
+  cache_offset_ = 0;
+  total_rows_ = 0;
   is_inited_ = false;
 }
 
@@ -177,7 +179,7 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
   if (IS_INIT) {
     ret = OB_INIT_TWICE;
     LOG_WARN("ObLoadCSVPaser init twice", KR(ret), KP(this));
-  } else if (OB_FAIL(csv_parser_.init(format, column_count, collation_type))) {
+  } else if (OB_FAIL(csv_parser_.init(format, column_count*PASER_CACHE_SIZE, collation_type))) {
     LOG_WARN("fail to init csv parser", KR(ret));
   } else {
     allocator_.set_tenant_id(MTL_ID());
@@ -190,6 +192,8 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
       row_.cells_ = objs;
       row_.count_ = column_count;
       collation_type_ = collation_type;
+      cache_offset_=0;
+      total_rows_=0;
       is_inited_ = true;
     }
   }
@@ -202,10 +206,25 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
   row = nullptr;
   if (buffer.empty()) {
     ret = OB_ITER_END;
+  } else if (cache_offset_<total_rows_) {
+    const ObIArray<ObCSVGeneralParser::FieldValue> &field_values_in_file =
+      csv_parser_.get_fields_per_line();
+    for (int64_t i = 0; i < row_.count_; ++i) {
+      const ObCSVGeneralParser::FieldValue &str_v = field_values_in_file.at(i+cache_offset_*row_.count_);
+      ObObj &obj = row_.cells_[i];
+      if (str_v.is_null_) {
+        obj.set_null();
+      } else {
+        obj.set_string(ObVarcharType, ObString(str_v.len_, str_v.ptr_));
+        obj.set_collation_type(collation_type_);
+      }
+    }
+    ++cache_offset_;
+    row = &row_;
   } else {
     const char *str = buffer.begin();
     const char *end = buffer.end();
-    int64_t nrows = 1;
+    int64_t nrows = PASER_CACHE_SIZE;
     if (OB_FAIL(csv_parser_.scan_simple(str, end, nrows, nullptr, nullptr, unused_row_handler_,
                                  err_records_, false))) {
       LOG_WARN("fail to scan buffer", KR(ret));
@@ -216,6 +235,7 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
       ret = OB_ITER_END;
     } else {
       buffer.consume(str - buffer.begin());
+      total_rows_=nrows;
       const ObIArray<ObCSVGeneralParser::FieldValue> &field_values_in_file =
         csv_parser_.get_fields_per_line();
       for (int64_t i = 0; i < row_.count_; ++i) {
@@ -228,6 +248,7 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
           obj.set_collation_type(collation_type_);
         }
       }
+      cache_offset_=1;
       row = &row_;
     }
   }
