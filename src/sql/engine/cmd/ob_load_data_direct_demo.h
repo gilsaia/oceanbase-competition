@@ -58,7 +58,7 @@ private:
 
 class ObLoadCSVPaser
 {
-  static const int64_t PASER_CACHE_SIZE=10;
+  static const int64_t PASER_CACHE_SIZE=3;
 public:
   ObLoadCSVPaser();
   ~ObLoadCSVPaser();
