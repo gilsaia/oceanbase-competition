@@ -166,9 +166,9 @@ private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
   ObLoadDatumRowCompare compare_;
-  storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
+  // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   // storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
-  // storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
+  storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   bool is_closed_[EXTERNAL_PARALLEL_DEGREE];
   bool is_inited_;
   bool external_sort_lock_[EXTERNAL_PARALLEL_DEGREE];
