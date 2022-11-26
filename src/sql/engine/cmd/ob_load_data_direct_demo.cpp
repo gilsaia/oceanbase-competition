@@ -204,9 +204,7 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
 {
   int ret = OB_SUCCESS;
   row = nullptr;
-  if (buffer.empty()) {
-    ret = OB_ITER_END;
-  } else if (cache_offset_<total_rows_) {
+  if (cache_offset_<total_rows_) {
     const ObIArray<ObCSVGeneralParser::FieldValue> &field_values_in_file =
       csv_parser_.get_fields_per_line();
     for (int64_t i = 0; i < row_.count_; ++i) {
@@ -221,6 +219,8 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
     }
     ++cache_offset_;
     row = &row_;
+  } else if (buffer.empty()) {
+    ret = OB_ITER_END;
   } else {
     const char *str = buffer.begin();
     const char *end = buffer.end();
