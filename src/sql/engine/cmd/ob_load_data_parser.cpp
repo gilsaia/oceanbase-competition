@@ -27,7 +27,7 @@ namespace sql
 int ObCSVGeneralParser::init(const ObDataInFileStruct &format,
                              int64_t file_column_nums,
                              ObCollationType file_cs_type,
-                             int64_t line_size=1)
+                             int64_t line_size)
 {
   int ret = OB_SUCCESS;
   const char INVALID_TERM_CHAR = '\xff';
