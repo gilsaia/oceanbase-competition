@@ -59,6 +59,9 @@ private:
 class ObLoadCSVPaser
 {
   static const int64_t PASER_CACHE_SIZE=10;
+  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
+  static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
+  static const int64_t QUEUE_CAPACITY=256;
 public:
   ObLoadCSVPaser();
   ~ObLoadCSVPaser();
@@ -77,11 +80,13 @@ private:
   };
 private:
   common::ObArenaAllocator allocator_;
+  common::ObConcurrentFIFOAllocator queue_allocator_;
   common::ObCollationType collation_type_;
   ObCSVGeneralParser csv_parser_;
   common::ObNewRow row_;
   UnusedRowHandler unused_row_handler_;
   common::ObSEArray<ObCSVGeneralParser::LineErrRec, 1> err_records_;
+  ObLightyQueue blocked_queue_;
   bool is_inited_;
   int64_t cache_offset_;
   int64_t total_rows_;

@@ -181,8 +181,13 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
     LOG_WARN("ObLoadCSVPaser init twice", KR(ret), KP(this));
   } else if (OB_FAIL(csv_parser_.init(format, column_count, collation_type,PASER_CACHE_SIZE))) {
     LOG_WARN("fail to init csv parser", KR(ret));
+  } else if (OB_FAIL(queue_allocator_.init(QUEUE_ALLOCATOR_TOTAL_SIZE,0,QUEUE_ALLOCATOR_PAGE_SIZE))) {
+    LOG_WARN("fail to init queue allocator", KR(ret));
+  } else if (OB_FAIL(blocked_queue_.init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))) {
+    LOG_WARN("fail to init blocked queue", KR(ret));
   } else {
     allocator_.set_tenant_id(MTL_ID());
+    queue_allocator_.set_tenant_id(MTL_ID());
     ObObj *objs = nullptr;
     if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
