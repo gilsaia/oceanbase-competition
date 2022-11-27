@@ -1066,11 +1066,17 @@ int ObLoadDataDirectDemo::execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(pool_.init(load_stmt))) {
+  // datum_row_queue_ = static_cast<ObLoadDatumRowQueue *>(allocator_.alloc(sizeof(ObLoadDatumRowQueue)));
+  datum_row_queue_.init();
+  if (OB_FAIL(pool_.init(load_stmt, &datum_row_queue_))) {
     LOG_WARN("fail to pool init", KR(ret));
+  } else if (OB_FAIL(write_pool_.init(load_stmt, &datum_row_queue_))) {
+    LOG_WARN("fail to write pool init", KR(ret));
   }
   pool_.set_thread_count(PARALLEL_DEGREE);
   pool_.set_run_wrapper(MTL_CTX());
+  write_pool_.set_thread_count(WRITE_PARALLEL_DEGREE);
+  write_pool_.set_run_wrapper(MTL_CTX());
   return ret;
 }
 
@@ -1078,11 +1084,91 @@ int ObLoadDataDirectDemo::do_load()
 {
   int ret = OB_SUCCESS;
   pool_.start();
+  write_pool_.start();
   pool_.finish();
+  write_pool_.finish();
   return ret;
 }
 
-int ObLoadThreadPool::init_file_offset(const ObString &filepath)
+/**
+ * ObLoadTaskQueue
+ */
+
+void ObLoadDatumRowQueue::init()
+{
+  for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
+    queue_[i].init(1 << 16);
+    allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
+                      MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
+    is_ready[i] = false;
+    is_finish[i] = 0;
+  }
+}
+
+void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
+{
+  int ret = OB_SUCCESS;
+  const int64_t item_size = sizeof(ObLoadDatumRow) + data->get_deep_copy_size();
+  char *buf = NULL;
+  ObLoadDatumRow *new_data = NULL;
+  
+  if (OB_ISNULL(buf = static_cast<char *>(allocators_[idx].alloc(item_size)))) {
+    LOG_WARN("alloc no free!!", K(ret));
+  } else if (OB_ISNULL(new_data = new (buf) ObLoadDatumRow())) {
+    LOG_WARN("new item is null", K(ret));
+  } else {
+    int64_t buf_pos = sizeof(ObLoadDatumRow);
+    if (OB_FAIL(new_data->deep_copy(*data, buf, item_size, buf_pos))) {
+      LOG_WARN("deep copy fail", K(ret));
+    } else {
+      queue_[idx].push((void *)new_data);
+      // _LOG_INFO(" ObLoadDatumRowQueue thread idx %d, push finish", idx);
+    }
+  }
+  if (is_ready[idx] == false) {
+    is_ready[idx] = true;
+  }
+}
+
+void ObLoadDatumRowQueue::push_finish(const int idx)
+{
+  queue_[idx].push((void *)(&finish_flag));
+}
+
+void ObLoadDatumRowQueue::pop(const int idx, const ObLoadDatumRow *&data, bool &finish) 
+{
+  finish = false;
+  void *temp = nullptr;
+  while (true) {
+    while (OB_SUCCESS != queue_[idx].pop(temp, 0)) {
+      PAUSE();
+    }
+    if (temp == (void*)(&finish_flag)) {
+      is_finish[idx]++;
+      // _LOG_INFO("ObLoadTaskQueue thread idx %d, is_finish %d", idx, is_finish[idx]);
+      if (is_finish[idx] == READ_PARALLEL_DEGREE) {
+        finish = true;
+        return;
+      }
+    } 
+    else {
+      data = (ObLoadDatumRow *)temp;
+      // _LOG_INFO("ObLoadTaskQueue thread idx %d, pop finish", idx);
+      return;
+    }
+  }
+}
+
+void ObLoadDatumRowQueue::free(const int idx, const ObLoadDatumRow *data)
+{
+  allocators_[idx].free((void*)data);
+}
+
+/**
+ * ObReadThreadPool
+ */
+
+int ObReadThreadPool::init_file_offset(const ObString &filepath)
 {
   int ret = OB_SUCCESS;
   int fd = -1;
@@ -1122,17 +1208,17 @@ int ObLoadThreadPool::init_file_offset(const ObString &filepath)
     file_offsets_[i] += (offset + 1);
   }
   file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
-  int64_t min_key = 0;
+  int64_t min_key = 10000000;
   int64_t max_key = 300000000;
-  pviot_ = min_key + (max_key - min_key) / READ_PARALLEL_DEGREE + 1;
+  pviot_ = min_key + (max_key - min_key) / WRITE_PARALLEL_DEGREE + 1;
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
-    _LOG_INFO("ObLoadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
+    _LOG_INFO("ObReadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
   }
   close(fd);
   return ret;
 }
 
-int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
+int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue)
 {
   int ret = common::OB_SUCCESS;
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
@@ -1161,8 +1247,6 @@ int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
 
   for (int i = 0; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
     is_finish[i] = false;
-    is_writed[i] = false;
-    external_sort_lock_[i] = false;
     // init csv_parser_
     if (OB_FAIL(csv_parser_[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
                                       load_args.file_cs_type_))) {
@@ -1180,32 +1264,21 @@ int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
     else if (OB_FAIL(row_caster_[i].init(table_schema, field_or_var_list))) {
       LOG_WARN("fail to init row caster", KR(ret));
     }
-    // init external_sort_
-     if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
-      LOG_WARN("fail to init row caster", KR(ret));
-    }
   }
-  
-  // init external_sort_
-  // if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
-  //   LOG_WARN("fail to init row caster", KR(ret));
-  // }
-  // init sstable_writer_
-  if (OB_FAIL(sstable_writer_.init(table_schema))) {
-    LOG_WARN("fail to init sstable writer", KR(ret));
-  }
-  LOG_INFO("ObLoadThreadPool pool init finish", KR(ret));
+  datum_row_queue = queue;
+  LOG_INFO("ObReadThreadPool pool init finish", KR(ret));
   return ret;
 }
 
-void ObLoadThreadPool::run(int64_t idx)
+void ObReadThreadPool::run(int64_t idx)
 {
-  LOG_INFO("ObLoadThreadPool thread init start");
+  LOG_INFO("ObReadThreadPool thread init start");
   common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
   share::ObTenantBase *tenant_base = MTL_CTX();
   lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
   lib::Worker::set_compatibility_mode(mode);
-  LOG_INFO("ObLoadThreadPool thread init finish");
+  LOG_INFO("ObReadThreadPool thread init finish");
+
   int ret = OB_SUCCESS;
   int cur_row = 0;
   const ObNewRow *new_row = nullptr;
@@ -1229,7 +1302,6 @@ void ObLoadThreadPool::run(int64_t idx)
       LOG_WARN("unexpected empty buffer", KR(ret));
     } else {
       while (OB_SUCC(ret)) {
-        // _LOG_INFO("ObLoadThreadPool thread idx %ld, get_next_row", idx);
         if (OB_FAIL(csv_parser_[idx].get_next_row(buffer_[idx], new_row))) {
           if (OB_UNLIKELY(OB_ITER_END != ret)) {
             LOG_WARN("fail to get next row", KR(ret));
@@ -1241,36 +1313,109 @@ void ObLoadThreadPool::run(int64_t idx)
           LOG_WARN("fail to cast row", KR(ret));
         }
         int sort_idx = row_caster_[idx].key_value_ / pviot_;
-        if (sort_idx >= READ_PARALLEL_DEGREE) {
-          sort_idx = READ_PARALLEL_DEGREE - 1;
+        if (sort_idx >= WRITE_PARALLEL_DEGREE) {
+          sort_idx = WRITE_PARALLEL_DEGREE - 1;
         }
+        // _LOG_INFO("ObReadThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
+        datum_row_queue->push(sort_idx, datum_row);
         ++cur_row;
-        // _LOG_INFO("ObLoadThreadPool thread idx %ld, key value %ld sort_idx %d", idx, row_caster_[idx].key_value_, sort_idx);
-        while(!ATOMIC_BCAS(&external_sort_lock_[sort_idx], false, true)) {
-          PAUSE();
-        }
-        if (OB_FAIL(external_sort_[sort_idx].append_row(*datum_row))) {
-          LOG_WARN("fail to append row", KR(ret));
-        }
-        while(!ATOMIC_BCAS(&external_sort_lock_[sort_idx], true, false)) {
-          PAUSE();
-        }
       }
     }
   }
-  _LOG_INFO("ObLoadThreadPool thread %ld read row num %d finish", idx, cur_row);
+  for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
+    datum_row_queue->push_finish(i);
+  }
   is_finish[idx] = true;
-  for (int i = 0; i < READ_PARALLEL_DEGREE; i++) {
+  _LOG_INFO("ObReadThreadPool thread %ld read row num %d finish", idx, cur_row);
+}
+
+int ObReadThreadPool::finish() 
+{
+  int ret = OB_SUCCESS;
+  for (int i = 0; i < READ_PARALLEL_DEGREE; ++i) {
     while (is_finish[i] == false) {
-      ::usleep(100);
+      PAUSE();
     }
+  }
+  return ret;
+}
+
+/**
+ * ObWriteThreadPool
+ */
+
+int ObWriteThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue)
+{
+  int ret = OB_SUCCESS;
+  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
+    load_stmt.get_field_or_var_list();
+  const uint64_t tenant_id = load_args.tenant_id_;
+  const uint64_t table_id = load_args.table_id_;
+  ObSchemaGetterGuard schema_guard;
+  const ObTableSchema *table_schema = nullptr;
+  if (OB_FAIL(ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id,
+                                                                                  schema_guard))) {
+    LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
+  } else if (OB_FAIL(schema_guard.get_table_schema(tenant_id, table_id, table_schema))) {
+    LOG_WARN("fail to get table schema", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_ISNULL(table_schema)) {
+    ret = OB_TABLE_NOT_EXIST;
+    LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
+  }
+
+  for (int i = 0; OB_SUCC(ret) && i < WRITE_PARALLEL_DEGREE; ++i) {
+    is_sort[i] = false;
+    // init external_sort_
+     if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / WRITE_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
+      LOG_WARN("fail to init row caster", KR(ret));
+    }
+
+  }
+  // init sstable_writer_
+  if (OB_FAIL(sstable_writer_.init(table_schema))) {
+    LOG_WARN("fail to init sstable writer", KR(ret));
+  }
+  datum_row_queue = queue;
+  LOG_INFO("ObWriteThreadPool pool init finish", KR(ret));
+  return ret;
+}
+
+void ObWriteThreadPool::run(int64_t idx)
+{
+  int ret = OB_SUCCESS;
+  LOG_INFO("ObWriteThreadPool thread init start");
+  common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
+  share::ObTenantBase *tenant_base = MTL_CTX();
+  lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
+  lib::Worker::set_compatibility_mode(mode);
+  LOG_INFO("ObWriteThreadPool thread init finish");
+
+  const ObLoadDatumRow *datum_row = nullptr;
+  while (datum_row_queue->is_ready[idx] == false) {
+    PAUSE();
+  }
+  int sort_num = 0;
+  while (true) { 
+    bool finish = false;
+    datum_row_queue->pop(idx, datum_row, finish);
+    if (finish) {
+      break;
+    }
+    if (OB_FAIL(external_sort_[idx].append_row(*datum_row))) {
+      LOG_WARN("fail to append row", KR(ret));
+    }
+    datum_row_queue->free(idx, datum_row);
+    ++sort_num;
+    // _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   }
   if (OB_SUCC(ret)) {
     if (OB_FAIL(external_sort_[idx].close())) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
-  int write_row = 0;
+  _LOG_INFO("ObWriteThreadPool thread %ld sort close finish", idx);
+  int write_row = 0, get_row = 0;
   while (OB_SUCC(ret)) {
     if (OB_FAIL(external_sort_[idx].get_next_row(datum_row))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
@@ -1280,16 +1425,18 @@ void ObLoadThreadPool::run(int64_t idx)
         break;
       }
     }
+    ++get_row;
+    // _LOG_INFO("ObWriteThreadPool thread %ld get next row %d", idx, get_row);
     if (OB_FAIL(sstable_writer_.append_row_parallel(*datum_row, idx))) {
       LOG_WARN("fail to append row", KR(ret));
     }
     ++write_row;
+    // _LOG_INFO("ObWriteThreadPool thread %ld append row parallel %d", idx, write_row);
   }
-  _LOG_INFO("ObLoadThreadPool thread %ld end write, row num %d", idx, write_row);
-  is_writed[idx] = true;
-  for (int i = 0; i < READ_PARALLEL_DEGREE; i++) {
-    while (is_writed[i] == false) {
-      ::usleep(100);
+  is_sort[idx] = true;
+  for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
+    while (is_sort[i] == false) {
+      PAUSE();
     }
   }
   if (OB_SUCC(ret)) {
@@ -1297,14 +1444,14 @@ void ObLoadThreadPool::run(int64_t idx)
       LOG_WARN("fail to close sstable writer", KR(ret));
     }
   }
-  _LOG_INFO("ObLoadThreadPool thread %ld close sstable_writer_", idx);
+  _LOG_INFO("ObWriteThreadPool thread %ld close sstable_writer_", idx);
 }
 
-int ObLoadThreadPool::finish() 
+int ObWriteThreadPool::finish()
 {
   int ret = OB_SUCCESS;
   while (!sstable_writer_.is_close()) {
-    usleep(100);
+    PAUSE();
   }
   return ret;
 }
