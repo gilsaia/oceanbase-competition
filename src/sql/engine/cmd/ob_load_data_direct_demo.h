@@ -14,7 +14,7 @@ namespace oceanbase
 {
 namespace sql
 {
-#define LOAD_THREAD_NUM 4
+#define LOAD_THREAD_NUM 4 
 
 class ObLoadDataBuffer
 {
@@ -211,7 +211,7 @@ private:
 
 class ObLoadThreadPool : public share::ObThreadPool
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 28); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t READ_PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
@@ -227,6 +227,7 @@ public:
   ObLoadSSTableWriter sstable_writer_;
   common::ObArenaAllocator allocator_;
   int64_t pviot_;
+  std::mutex sort_latch_;
   
   int init_file_offset(const ObString &filepath);
   int init(ObLoadDataStmt &load_stmt);
@@ -236,7 +237,7 @@ public:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 28); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
