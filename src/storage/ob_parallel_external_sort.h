@@ -2105,7 +2105,7 @@ int ObExternalSort<T, Compare>::transfer_final_sorted_fragment_iter(
   return ret;
 }
 
-constexpr int64_t CONCURRENT_NUM = 8;
+constexpr int64_t CONCURRENT_NUM = 4;
 template<typename T, typename Compare>
 class ObParallelExternalSortRound
 {
