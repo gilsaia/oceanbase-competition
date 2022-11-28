@@ -14,7 +14,7 @@ namespace oceanbase
 {
 namespace sql
 {
-#define LOAD_THREAD_NUM 4 
+#define LOAD_THREAD_NUM 8
 
 class ObLoadDataBuffer
 {
@@ -211,7 +211,7 @@ private:
 
 class ObLoadThreadPool : public share::ObThreadPool
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 28); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t READ_PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
@@ -220,8 +220,8 @@ public:
   ObLoadSequentialFileReader file_reader_[READ_PARALLEL_DEGREE];
   ObLoadDataBuffer buffer_[READ_PARALLEL_DEGREE];
   ObLoadRowCaster row_caster_[READ_PARALLEL_DEGREE];
-  bool is_finish[READ_PARALLEL_DEGREE];
-  bool is_writed[READ_PARALLEL_DEGREE];
+  std::atomic<bool> is_finish[READ_PARALLEL_DEGREE];
+  std::atomic<bool> is_writed[READ_PARALLEL_DEGREE];
   ObLoadExternalSort external_sort_[READ_PARALLEL_DEGREE];
   bool external_sort_lock_[READ_PARALLEL_DEGREE];
   ObLoadSSTableWriter sstable_writer_;
@@ -237,7 +237,7 @@ public:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 28); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:

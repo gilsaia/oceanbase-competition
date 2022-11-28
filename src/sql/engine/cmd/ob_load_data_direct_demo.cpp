@@ -1181,7 +1181,7 @@ int ObLoadThreadPool::init(ObLoadDataStmt &load_stmt)
       LOG_WARN("fail to init row caster", KR(ret));
     }
     // init external_sort_
-     if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE))) {
+     if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / READ_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
       LOG_WARN("fail to init row caster", KR(ret));
     }
   }
@@ -1266,7 +1266,7 @@ void ObLoadThreadPool::run(int64_t idx)
     }
   }
   if (OB_SUCC(ret)) {
-    std::lock_guard<std::mutex> lk(sort_latch_);
+    // std::lock_guard<std::mutex> lk(sort_latch_);
     if (OB_FAIL(external_sort_[idx].close())) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
