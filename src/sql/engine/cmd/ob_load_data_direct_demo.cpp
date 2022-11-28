@@ -1112,9 +1112,10 @@ void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
   char *buf = NULL;
   ObLoadDatumRow *new_data = NULL;
   
-  if (OB_ISNULL(buf = static_cast<char *>(allocators_[idx].alloc(item_size)))) {
-    LOG_WARN("alloc no free!!", K(ret));
-  } else if (OB_ISNULL(new_data = new (buf) ObLoadDatumRow())) {
+  while (OB_ISNULL(buf = static_cast<char *>(allocators_[idx].alloc(item_size)))) {
+    PAUSE();
+  }
+  if (OB_ISNULL(new_data = new (buf) ObLoadDatumRow())) {
     LOG_WARN("new item is null", K(ret));
   } else {
     int64_t buf_pos = sizeof(ObLoadDatumRow);
@@ -1214,7 +1215,7 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
     _LOG_INFO("ObReadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
   }
-  close(fd);
+  close(fd); 
   return ret;
 }
 
@@ -1316,12 +1317,15 @@ void ObReadThreadPool::run(int64_t idx)
         if (sort_idx >= WRITE_PARALLEL_DEGREE) {
           sort_idx = WRITE_PARALLEL_DEGREE - 1;
         }
-        // _LOG_INFO("ObReadThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
+        if (cur_row % 100000 == 0) {
+          _LOG_INFO("ObReadThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
+        }
         datum_row_queue->push(sort_idx, datum_row);
         ++cur_row;
       }
     }
   }
+  _LOG_INFO("ObReadThreadPool thread idx %ld, row num %d push into queue", idx, cur_row);
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
     datum_row_queue->push_finish(i);
   }
@@ -1409,6 +1413,7 @@ void ObWriteThreadPool::run(int64_t idx)
     ++sort_num;
     // _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   }
+  _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   if (OB_SUCC(ret)) {
     if (OB_FAIL(external_sort_[idx].close())) {
       LOG_WARN("fail to close external sort", KR(ret));
@@ -1433,18 +1438,20 @@ void ObWriteThreadPool::run(int64_t idx)
     ++write_row;
     // _LOG_INFO("ObWriteThreadPool thread %ld append row parallel %d", idx, write_row);
   }
+  _LOG_INFO("ObWriteThreadPool thread %ld append row parallel %d", idx, write_row);
   is_sort[idx] = true;
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
     while (is_sort[i] == false) {
       PAUSE();
     }
   }
+  _LOG_INFO("ObWriteThreadPool thread %ld all thread finish append_row_parallel", idx);
   if (OB_SUCC(ret)) {
     if (idx == 0 && OB_FAIL(sstable_writer_.close())) {
       LOG_WARN("fail to close sstable writer", KR(ret));
     }
   }
-  _LOG_INFO("ObWriteThreadPool thread %ld close sstable_writer_", idx);
+  _LOG_INFO("ObWriteThreadPool thread %ld close sstable writer", idx);
 }
 
 int ObWriteThreadPool::finish()
