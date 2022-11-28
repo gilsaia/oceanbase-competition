@@ -2105,10 +2105,83 @@ int ObExternalSort<T, Compare>::transfer_final_sorted_fragment_iter(
   return ret;
 }
 
+template<typename T>
+class ObMergeItemQueue
+{
+private:
+  int64_t buf_mem_limit_;
+  common::ObLightyQueue queue_;
+  common::ObConcurrentFIFOAllocator allocator_;
+public:
+  ObMergeItemQueue();
+  virtual ~ObMergeItemQueue();
+  void init(int64_t buf_mem_limit);
+  int push(const T &item);
+  int pop(const T *&item);
+  void free(const T *item);
+};
+
+template<typename T>
+ObMergeItemQueue::ObMergeItemQueue()
+  : buf_limit_(0)
+{ 
+}
+template<typename T>
+ObMergeItemQueue::init(int64_t buf_mem_limit)
+{
+  buf_mem_limit_ = buf_mem_limit;
+}
+
+template<typename T>
+int ObMergeItemQueue::pop(const T &*item)
+{
+
+}
+
+template<typename T>
+void ObMergeItemQueue::free(const T *item)
+{
+
+}
+
+template<typename T>
+int ObMergeItemQueue::push(const T &item)
+{
+  int ret = common::OB_SUCCESS;
+  char *buf = NULL;
+  T *new_item = NULL;
+  const int64_t item_size = sizeof(T) + item.get_deep_copy_size();
+
+  if (item_size > buf_mem_limit_) {
+    STORAGE_LOG(WARN, "invalid item size, must not larger than buf memory limit",
+        K(ret), K(item_size), K(buf_mem_limit_));
+  } else if (allocator_.used() + item_size > buf_mem_limit_)
+  while(allocator_.used() + item_size > buf_mem_limit_) {
+    usleep(10);
+  }
+  if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
+    ret = common::OB_ALLOCATE_MEMORY_FAILED;
+    STORAGE_LOG(WARN, "fail to allocate memory", K(ret), K(item_size));
+  } else if (OB_ISNULL(new_item = new (buf) T())) {
+    ret = common::OB_ALLOCATE_MEMORY_FAILED;
+    STORAGE_LOG(WARN, "fail to placement new item", K(ret));
+  } else {
+    int64_t buf_pos = sizeof(T);
+    if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
+      STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
+    } else if (OB_FAIL(queue_.push_back(new_item))) {
+      STORAGE_LOG(WARN, "fail to push back new item", K(ret));
+    }
+  }
+  return ret;
+}
+
+
 constexpr int64_t CONCURRENT_NUM = 4;
 template<typename T, typename Compare>
 class ObParallelExternalSortRound
-{
+{ 
+}
 public:
   ObParallelExternalSortRound();
   virtual ~ObParallelExternalSortRound();
