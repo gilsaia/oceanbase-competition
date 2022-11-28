@@ -1097,7 +1097,7 @@ int ObLoadDataDirectDemo::do_load()
 void ObLoadDatumRowQueue::init()
 {
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
-    queue_[i].init(1 << 16);
+    queue_[i].init(1 << 18);
     allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
                       MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
     is_ready[i] = false;
@@ -1122,7 +1122,9 @@ void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
     if (OB_FAIL(new_data->deep_copy(*data, buf, item_size, buf_pos))) {
       LOG_WARN("deep copy fail", K(ret));
     } else {
-      queue_[idx].push((void *)new_data);
+      while (OB_SUCCESS != queue_[idx].push((void *)new_data)) {
+        PAUSE();
+      }
       // _LOG_INFO(" ObLoadDatumRowQueue thread idx %d, push finish", idx);
     }
   }
@@ -1133,7 +1135,9 @@ void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
 
 void ObLoadDatumRowQueue::push_finish(const int idx)
 {
-  queue_[idx].push((void *)(&finish_flag));
+  while (OB_SUCCESS != queue_[idx].push((void *)(&finish_flag))) {
+    PAUSE();
+  }
 }
 
 void ObLoadDatumRowQueue::pop(const int idx, const ObLoadDatumRow *&data, bool &finish) 
@@ -1400,8 +1404,8 @@ void ObWriteThreadPool::run(int64_t idx)
     PAUSE();
   }
   int sort_num = 0;
+  bool finish = false;
   while (true) { 
-    bool finish = false;
     datum_row_queue->pop(idx, datum_row, finish);
     if (finish) {
       break;
