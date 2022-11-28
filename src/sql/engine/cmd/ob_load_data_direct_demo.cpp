@@ -579,14 +579,14 @@ int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, co
  */
 
 ObLoadExternalSort::ObLoadExternalSort()
-  : allocator_(ObModIds::OB_SQL_LOAD_DATA), is_inited_(false)
+  : is_inited_(false)
 {
 }
 
 ObLoadExternalSort::~ObLoadExternalSort()
 {
   // external_sort_.clean_up();
-  for(int64_t i=0;i<EXTERNAL_PARALLEL_DEGREE;++i){
+  for(int64_t i=0; i < EXTERNAL_PARALLEL_DEGREE; ++i){
     external_sorts_[i].clean_up();
   }
 }
@@ -602,30 +602,32 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid args", KR(ret), KP(table_schema));
   } else {
-    allocator_.set_tenant_id(MTL_ID());
-    const int64_t rowkey_column_num = table_schema->get_rowkey_column_num();
-    ObArray<ObColDesc> multi_version_column_descs;
-    if (OB_FAIL(table_schema->get_multi_version_column_descs(multi_version_column_descs))) {
-      LOG_WARN("fail to get multi version column descs", KR(ret));
-    } else if (OB_FAIL(datum_utils_.init(multi_version_column_descs, rowkey_column_num,
-                                         is_oracle_mode(), allocator_))) {
-      LOG_WARN("fail to init datum utils", KR(ret));
-    } else if (OB_FAIL(compare_.init(rowkey_column_num, &datum_utils_))) {
-      LOG_WARN("fail to init compare", KR(ret));
-    // } else if (OB_FAIL(external_sort_.init(mem_size, file_buf_size, 0, MTL_ID(), &compare_))) {
-    //   LOG_WARN("fail to init external sort", KR(ret));
-    } else {
-      for(int64_t i=0;i<EXTERNAL_PARALLEL_DEGREE;++i){
-        if(OB_FAIL(external_sorts_[i].init(mem_size,file_buf_size,0,MTL_ID(),&compare_))){
-          LOG_WARN("fail to init external sort",KR(ret));
-          return ret;
-        }
+    for (int i = 0; i < EXTERNAL_PARALLEL_DEGREE; ++i) {
+      allocator_[i].set_tenant_id(MTL_ID());
+      const int64_t rowkey_column_num = table_schema->get_rowkey_column_num();
+      ObArray<ObColDesc> multi_version_column_descs;
+      if (OB_FAIL(table_schema->get_multi_version_column_descs(multi_version_column_descs))) {
+        LOG_WARN("fail to get multi version column descs", KR(ret));
+      } else if (OB_FAIL(datum_utils_[i].init(multi_version_column_descs, rowkey_column_num,
+                                          is_oracle_mode(), allocator_[i]))) {
+        LOG_WARN("fail to init datum utils", KR(ret));
+      } else if (OB_FAIL(compare_[i].init(rowkey_column_num, &datum_utils_[i]))) {
+        LOG_WARN("fail to init compare", KR(ret));
+      } else if (OB_FAIL(external_sorts_[i].init(mem_size, file_buf_size, 0, MTL_ID(), &compare_[i]))) {
+        LOG_WARN("fail to init external sort", KR(ret));
+      // } else {
+      //   for(int64_t i=0;i<EXTERNAL_PARALLEL_DEGREE;++i){
+      //     if(OB_FAIL(external_sorts_[i].init(mem_size,file_buf_size,0,MTL_ID(),&compare_))){
+      //       LOG_WARN("fail to init external sort",KR(ret));
+      //       return ret;
+      //     }
+      //   }
       }
-      MEMSET(is_closed_, 0, sizeof(is_closed_));
-      MEMSET(external_sort_lock_, 0, sizeof(external_sort_lock_));
-      is_inited_ = true;
     }
   }
+  MEMSET(is_closed_, 0, sizeof(is_closed_));
+  MEMSET(external_sort_lock_, 0, sizeof(external_sort_lock_));
+  is_inited_ = true;
   return ret;
 }
 
@@ -1370,14 +1372,16 @@ int ObWriteThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queu
   } else if (OB_ISNULL(table_schema)) {
     ret = OB_TABLE_NOT_EXIST;
     LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_FAIL(external_sort_.init(table_schema, MEM_BUFFER_SIZE / WRITE_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
+    LOG_WARN("fail to init row caster", KR(ret));
   }
 
   for (int i = 0; OB_SUCC(ret) && i < WRITE_PARALLEL_DEGREE; ++i) {
     is_sort[i] = false;
     // init external_sort_
-     if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / WRITE_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
-      LOG_WARN("fail to init row caster", KR(ret));
-    }
+    // if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / WRITE_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
+    //   LOG_WARN("fail to init row caster", KR(ret));
+    // }
 
   }
   // init sstable_writer_
@@ -1410,7 +1414,7 @@ void ObWriteThreadPool::run(int64_t idx)
     if (finish) {
       break;
     }
-    if (OB_FAIL(external_sort_[idx].append_row(*datum_row))) {
+    if (OB_FAIL(external_sort_.append_row_parallel(*datum_row, idx))) {
       LOG_WARN("fail to append row", KR(ret));
     }
     datum_row_queue->free(idx, datum_row);
@@ -1419,14 +1423,14 @@ void ObWriteThreadPool::run(int64_t idx)
   }
   _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_[idx].close())) {
+    if (OB_FAIL(external_sort_.close_parallel(idx))) {
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
   _LOG_INFO("ObWriteThreadPool thread %ld sort close finish", idx);
   int write_row = 0, get_row = 0;
   while (OB_SUCC(ret)) {
-    if (OB_FAIL(external_sort_[idx].get_next_row(datum_row))) {
+    if (OB_FAIL(external_sort_.get_next_row_parallel(datum_row, idx))) {
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
       } else {

@@ -15,7 +15,7 @@ namespace oceanbase
 {
 namespace sql
 {
-#define READ_THREAD_NUM 4
+#define READ_THREAD_NUM 3
 #define WRITE_THREAD_NUM 6
 
 class ObLoadDataBuffer
@@ -152,7 +152,7 @@ private:
 
 class ObLoadExternalSort
 {
-  static const int64_t EXTERNAL_PARALLEL_DEGREE = 1;
+  static const int64_t EXTERNAL_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   ObLoadExternalSort();
   ~ObLoadExternalSort();
@@ -165,9 +165,9 @@ public:
   int get_next_row(const ObLoadDatumRow *&datum_row);
   int get_next_row_parallel(const ObLoadDatumRow *&datum_row,const int64_t index);
 private:
-  common::ObArenaAllocator allocator_;
-  blocksstable::ObStorageDatumUtils datum_utils_;
-  ObLoadDatumRowCompare compare_;
+  common::ObArenaAllocator allocator_[EXTERNAL_PARALLEL_DEGREE];
+  blocksstable::ObStorageDatumUtils datum_utils_[EXTERNAL_PARALLEL_DEGREE];
+  ObLoadDatumRowCompare compare_[EXTERNAL_PARALLEL_DEGREE];
   storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   // storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
   // storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
@@ -264,7 +264,7 @@ public:
   int finish();
 
   bool is_sort[WRITE_PARALLEL_DEGREE];
-  ObLoadExternalSort external_sort_[WRITE_PARALLEL_DEGREE];;
+  ObLoadExternalSort external_sort_;
   ObLoadSSTableWriter sstable_writer_;
   ObLoadDatumRowQueue *datum_row_queue;
 };
