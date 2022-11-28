@@ -16,6 +16,7 @@ namespace oceanbase
 namespace sql
 {
 #define READ_THREAD_NUM 3
+#define CAST_THREAD_NUM 3
 #define WRITE_THREAD_NUM 6
 
 class ObLoadDataBuffer
@@ -224,6 +225,7 @@ class ObLoadDatumRowQueue
   static const int64_t TOTAL_SIZE = 1 * (1 << 30);
   static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
+  static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   void init();
@@ -237,6 +239,21 @@ public:
   int is_finish[WRITE_PARALLEL_DEGREE];
   ObLoadDatumRow finish_flag;
 };
+
+class ObReadRowQueue
+{
+  static const int64_t TOTAL_SIZE = 1 * (1 << 30);
+  static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
+  static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
+public:
+  int init();
+  int push(const int idx);
+  int push_finish(const int idx);
+  int pop(const int idx);
+  int free(const int idx);
+  common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE];
+  common::ObConcurrentFIFOAllocator allocators_[CAST_PARALLEL_DEGREE];
+}
 
 class ObReadThreadPool : public share::ObThreadPool
 {
@@ -261,6 +278,18 @@ public:
   int64_t pviot_;
 };
 
+class ObCastThreadPool : public share::ObThreadPool
+{
+  static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
+public:
+  int init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue);
+  void run(int64_t idx) final;
+  int finish();
+private:
+  ObLoadRowCaster row_caster_[CAST_PARALLEL_DEGREE];
+  ObLoadDatumRowQueue *datum_row_queue;
+}
+
 class ObWriteThreadPool : public share::ObThreadPool
 {
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
@@ -282,6 +311,7 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t PARALLEL_DEGREE = READ_THREAD_NUM;
+  static const int64_t CAST_PARALLEL_DEGReE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   ObLoadDataDirectDemo();
@@ -292,7 +322,9 @@ private:
   int do_load();
 private:
   ObReadThreadPool pool_;
+  ObCastThreadPool cast_pool_;
   ObWriteThreadPool write_pool_;
+  ObReadRowQueue read_row_queue_;
   ObLoadDatumRowQueue datum_row_queue_;
   common::ObArenaAllocator allocator_;
 };

@@ -1098,11 +1098,15 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   datum_row_queue_.init();
   if (OB_FAIL(pool_.init(load_stmt, &datum_row_queue_))) {
     LOG_WARN("fail to pool init", KR(ret));
+  } else if (OB_FAIL(cast_pool_.init(load_stmt,&datum_row_queue_))){
+    LOG_WARN("fail to cast pool init", KR(ret));
   } else if (OB_FAIL(write_pool_.init(load_stmt, &datum_row_queue_))) {
     LOG_WARN("fail to write pool init", KR(ret));
   }
   pool_.set_thread_count(PARALLEL_DEGREE);
   pool_.set_run_wrapper(MTL_CTX());
+  cast_pool_.set_thread_count(CAST_PARALLEL_DEGREE);
+  cast_pool_.set_run_wrapper(MTL_CTX());
   write_pool_.set_thread_count(WRITE_PARALLEL_DEGREE);
   write_pool_.set_run_wrapper(MTL_CTX());
   return ret;
@@ -1112,8 +1116,10 @@ int ObLoadDataDirectDemo::do_load()
 {
   int ret = OB_SUCCESS;
   pool_.start();
+  cast_pool_.start();
   write_pool_.start();
   pool_.finish();
+  cast_pool_.finish();
   write_pool_.finish();
   return ret;
 }
@@ -1373,6 +1379,62 @@ int ObReadThreadPool::finish()
       PAUSE();
     }
   }
+  return ret;
+}
+
+/**
+ * ObCastThreadPool
+*/
+
+int ObCastThreadPool::init(ObLoadDataStmt &load_stmt,ObLoadDatumRowQueue *queue,)
+{
+  int ret = common::OB_SUCCESS;
+  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
+    load_stmt.get_field_or_var_list();
+  const uint64_t tenant_id = load_args.tenant_id_;
+  const uint64_t table_id = load_args.table_id_;
+  ObSchemaGetterGuard schema_guard;
+  const ObTableSchema *table_schema = nullptr;
+  if (OB_FAIL(ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id,
+                                                                                  schema_guard))) {
+    LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
+  } else if (OB_FAIL(schema_guard.get_table_schema(tenant_id, table_id, table_schema))) {
+    LOG_WARN("fail to get table schema", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_ISNULL(table_schema)) {
+    ret = OB_TABLE_NOT_EXIST;
+    LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
+    LOG_WARN("fail to set compressor none", KR(ret));
+  } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_WARN("not support heap table", KR(ret));
+  } else if (OB_FAIL(init_file_offset(load_args.full_file_path_))) {
+    LOG_WARN("fail to init file offset", KR(ret));
+  }
+
+  for (int i = 0; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
+    is_finish[i] = false;
+    // init csv_parser_
+    if (OB_FAIL(csv_parser_[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
+                                      load_args.file_cs_type_))) {
+      LOG_WARN("fail to init csv parser", KR(ret));
+    }
+    // init file_reader_
+    else if (OB_FAIL(file_reader_[i].open_parallel(load_args.full_file_path_, file_offsets_[i], file_offsets_[i + 1]))) {
+      LOG_WARN("fail to open file", KR(ret), K(load_args.full_file_path_));
+    }
+    // init buffer_
+    else if (OB_FAIL(buffer_[i].create(FILE_BUFFER_SIZE))) {
+      LOG_WARN("fail to create buffer", KR(ret));
+    }
+    // init row_caster_
+    else if (OB_FAIL(row_caster_[i].init(table_schema, field_or_var_list))) {
+      LOG_WARN("fail to init row caster", KR(ret));
+    }
+  }
+  datum_row_queue = queue;
+  LOG_INFO("ObReadThreadPool pool init finish", KR(ret));
   return ret;
 }
 
