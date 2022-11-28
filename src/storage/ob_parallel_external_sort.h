@@ -529,7 +529,7 @@ int ObFragmentReaderV2<T>::init(const int64_t fd, const int64_t dir_id, const in
       tenant_id_ = tenant_id;
       is_first_prefetch_ = true;
       buf_size_ = common::lower_align(buf_size, OB_SERVER_BLOCK_MGR.get_macro_block_size());
-      LOG_INFO("fragment reader buf size", K(buf_size_));
+      // LOG_INFO("fragment reader buf size", K(buf_size_));
       is_inited_ = true;
     }
   }
@@ -557,7 +557,7 @@ int ObFragmentReaderV2<T>::prefetch()
     ret = OB_NOT_INIT;
     STORAGE_LOG(WARN, "ObFragmentReaderV2 has not been inited", K(ret));
   } else {
-    LOG_INFO("fragment reader try alloc buf");
+    // LOG_INFO("fragment reader try alloc buf");
     if (nullptr == buf_) {
       if (OB_ISNULL(buf_ = static_cast<char *>(allocator_.alloc(buf_size_)))) {
         ret = common::OB_ALLOCATE_MEMORY_FAILED;
@@ -2149,24 +2149,27 @@ int ObMergeItemQueue<T>::push(const T &item)
   if (item_size > buf_mem_limit_) {
     STORAGE_LOG(WARN, "invalid item size, must not larger than buf memory limit",
         K(ret), K(item_size), K(buf_mem_limit_));
-  } else if (allocator_.used() + item_size > buf_mem_limit_)
-  while(allocator_.used() + item_size > buf_mem_limit_) {
-    usleep(10);
-  }
-  if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
-    ret = common::OB_ALLOCATE_MEMORY_FAILED;
-    STORAGE_LOG(WARN, "fail to allocate memory", K(ret), K(item_size));
-  } else if (OB_ISNULL(new_item = new (buf) T())) {
-    ret = common::OB_ALLOCATE_MEMORY_FAILED;
-    STORAGE_LOG(WARN, "fail to placement new item", K(ret));
   } else {
-    int64_t buf_pos = sizeof(T);
-    if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
-      STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
-    } else if (OB_FAIL(queue_.push(new_item))) {
-      STORAGE_LOG(WARN, "fail to push back new item", K(ret));
+    while(allocator_.used() + item_size > buf_mem_limit_) {
+      usleep(10);
+    }
+    if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
+      ret = common::OB_ALLOCATE_MEMORY_FAILED;
+      STORAGE_LOG(WARN, "fail to allocate memory", K(ret), K(item_size));
+    } else if (OB_ISNULL(new_item = new (buf) T())) {
+      ret = common::OB_ALLOCATE_MEMORY_FAILED;
+      STORAGE_LOG(WARN, "fail to placement new item", K(ret));
+    } else {
+      int64_t buf_pos = sizeof(T);
+      if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
+        STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
+      } else if (OB_FAIL(queue_.push(new_item))) {
+        STORAGE_LOG(WARN, "fail to push back new item", K(ret));
+      }
+      LOG_INFO("finish push queue");
     }
   }
+  
   return ret;
 }
 
@@ -2246,7 +2249,7 @@ private:
   // typedef ObFragmentMergeBuffer<T, Compare> FragmentMergeBuffer;
   typedef ObMergeItemQueue<T> MergeItemQueue;
   typedef ObMergeBufferPool<T, Compare> MergeBufferPool;
-  static const int64_t QUEUE_MEM_LIMIT = (1LL < 20);
+  static const int64_t QUEUE_MEM_LIMIT = (1LL << 20);
   bool is_inited_;
   int64_t file_buf_size_;
   FragmentIteratorList iters_;
