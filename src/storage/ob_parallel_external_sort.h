@@ -2103,6 +2103,7 @@ void ObMergeItemQueue<T>::init(int64_t buf_mem_limit)
   allocator_.init(TOTAL_LIMIT, HOLD_LIMIT, PAGE_SIZE);
   buf_mem_limit_ = buf_mem_limit;
   is_finish_ = false;
+  LOG_INFO("buf mem limit",K(buf_mem_limit_));
 }
 
 template<typename T>
@@ -2150,25 +2151,26 @@ int ObMergeItemQueue<T>::push(const T &item)
     STORAGE_LOG(WARN, "invalid item size, must not larger than buf memory limit",
         K(ret), K(item_size), K(buf_mem_limit_));
   } else {
-    while(allocator_.used() + item_size > buf_mem_limit_) {
-      usleep(10);
+    LOG_INFO("queue used", K(allocator_.used()));
+    while (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
+      usleep(100);
     }
-    if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
-      ret = common::OB_ALLOCATE_MEMORY_FAILED;
-      STORAGE_LOG(WARN, "fail to allocate memory", K(ret), K(item_size));
-    } else if (OB_ISNULL(new_item = new (buf) T())) {
+    if (OB_ISNULL(new_item = new (buf) T())) {
       ret = common::OB_ALLOCATE_MEMORY_FAILED;
       STORAGE_LOG(WARN, "fail to placement new item", K(ret));
     } else {
       int64_t buf_pos = sizeof(T);
       if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
         STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
-      } else if (OB_FAIL(queue_.push(new_item))) {
-        STORAGE_LOG(WARN, "fail to push back new item", K(ret));
+      } else {
+        while (OB_SUCCESS != queue_.push((void *)new_item)) {
+          usleep(100);
+        }
       }
-      LOG_INFO("finish push queue");
+      LOG_INFO("success push item to queue");
     }
   }
+  LOG_INFO("finish push queue");
   
   return ret;
 }
