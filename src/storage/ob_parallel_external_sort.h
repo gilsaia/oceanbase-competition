@@ -2218,7 +2218,7 @@ private:
   MergeItemQueue *queue_;
 };
 
-constexpr int64_t CONCURRENT_NUM = 4;
+constexpr int64_t CONCURRENT_NUM = 8;
 template<typename T, typename Compare>
 class ObParallelExternalSortRound
 { 
