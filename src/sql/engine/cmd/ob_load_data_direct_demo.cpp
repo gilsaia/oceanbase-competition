@@ -1215,9 +1215,9 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
     file_offsets_[i] += (offset + 1);
   }
   file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
-  int64_t min_key = 10000000;
   int64_t max_key = 300000000;
-  pviot_ = min_key + (max_key - min_key) / WRITE_PARALLEL_DEGREE + 1;
+  pviot_ = max_key / WRITE_PARALLEL_DEGREE;
+  _LOG_INFO("ObReadThreadPool pviot %ld", pviot_);
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
     _LOG_INFO("ObReadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
   }
@@ -1419,7 +1419,9 @@ void ObWriteThreadPool::run(int64_t idx)
     }
     datum_row_queue->free(idx, datum_row);
     ++sort_num;
-    // _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
+    if (sort_num % 100000 == 0) {
+      _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
+    }
   }
   _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   if (OB_SUCC(ret)) {

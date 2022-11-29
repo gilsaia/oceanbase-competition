@@ -16,7 +16,7 @@ namespace oceanbase
 namespace sql
 {
 #define READ_THREAD_NUM 4
-#define WRITE_THREAD_NUM 6
+#define WRITE_THREAD_NUM 8
 
 class ObLoadDataBuffer
 {
@@ -168,9 +168,9 @@ private:
   common::ObArenaAllocator allocator_[EXTERNAL_PARALLEL_DEGREE];
   blocksstable::ObStorageDatumUtils datum_utils_[EXTERNAL_PARALLEL_DEGREE];
   ObLoadDatumRowCompare compare_[EXTERNAL_PARALLEL_DEGREE];
-  storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
+  // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   // storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
-  // storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
+  storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   bool is_closed_[EXTERNAL_PARALLEL_DEGREE];
   bool is_inited_;
   bool external_sort_lock_[EXTERNAL_PARALLEL_DEGREE];
@@ -213,7 +213,7 @@ private:
 
 class ObLoadDatumRowQueue 
 {
-  static const int64_t TOTAL_SIZE = 2LL * (1 << 30);
+  static const int64_t TOTAL_SIZE = 4LL * (1 << 30);
   static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
   static const int64_t QUEUE_MAX_SIZE = (1 << 20);
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
