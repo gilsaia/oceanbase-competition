@@ -1099,7 +1099,7 @@ int ObLoadDataDirectDemo::do_load()
 void ObLoadDatumRowQueue::init()
 {
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
-    queue_[i].init(1 << 18);
+    queue_[i].init(QUEUE_MAX_SIZE);
     allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
                       MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
     is_ready[i] = false;

@@ -15,7 +15,7 @@ namespace oceanbase
 {
 namespace sql
 {
-#define READ_THREAD_NUM 3
+#define READ_THREAD_NUM 4
 #define WRITE_THREAD_NUM 6
 
 class ObLoadDataBuffer
@@ -213,8 +213,9 @@ private:
 
 class ObLoadDatumRowQueue 
 {
-  static const int64_t TOTAL_SIZE = 1 * (1 << 30);
+  static const int64_t TOTAL_SIZE = 2LL * (1 << 30);
   static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
+  static const int64_t QUEUE_MAX_SIZE = (1 << 20);
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
@@ -232,7 +233,7 @@ public:
 
 class ObReadThreadPool : public share::ObThreadPool
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
