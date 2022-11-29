@@ -150,7 +150,7 @@ private:
 
 class ObLoadExternalSort
 {
-  static const int64_t EXTERNAL_PARALLEL_DEGREE = 1;
+  static const int64_t EXTERNAL_PARALLEL_DEGREE = 4;
 public:
   ObLoadExternalSort();
   ~ObLoadExternalSort();
