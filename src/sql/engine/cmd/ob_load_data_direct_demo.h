@@ -9,12 +9,14 @@
 #include "storage/ob_parallel_external_sort.h"
 #include "storage/tx_storage/ob_ls_handle.h"
 #include "lib/queue/ob_lighty_queue.h"
+#include "lib/allocator/ob_concurrent_fifo_allocator.h"
 
 namespace oceanbase
 {
 namespace sql
 {
-#define LOAD_THREAD_NUM 4 
+#define READ_THREAD_NUM 4
+#define WRITE_THREAD_NUM 8
 
 class ObLoadDataBuffer
 {
@@ -150,7 +152,7 @@ private:
 
 class ObLoadExternalSort
 {
-  static const int64_t EXTERNAL_PARALLEL_DEGREE = 1;
+  static const int64_t EXTERNAL_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   ObLoadExternalSort();
   ~ObLoadExternalSort();
@@ -163,9 +165,9 @@ public:
   int get_next_row(const ObLoadDatumRow *&datum_row);
   int get_next_row_parallel(const ObLoadDatumRow *&datum_row,const int64_t index);
 private:
-  common::ObArenaAllocator allocator_;
-  blocksstable::ObStorageDatumUtils datum_utils_;
-  ObLoadDatumRowCompare compare_;
+  common::ObArenaAllocator allocator_[EXTERNAL_PARALLEL_DEGREE];
+  blocksstable::ObStorageDatumUtils datum_utils_[EXTERNAL_PARALLEL_DEGREE];
+  ObLoadDatumRowCompare compare_[EXTERNAL_PARALLEL_DEGREE];
   // storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
   // storage::ObParallelExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
   storage::ObParallelExternalSort<ObLoadDatumRow,ObLoadDatumRowCompare> external_sorts_[EXTERNAL_PARALLEL_DEGREE];
@@ -176,7 +178,7 @@ private:
 
 class ObLoadSSTableWriter
 {
-  static const int64_t MACRO_PARALLEL_DEGREE = LOAD_THREAD_NUM;
+  static const int64_t MACRO_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   ObLoadSSTableWriter();
   ~ObLoadSSTableWriter();
@@ -209,37 +211,71 @@ private:
   bool is_inited_;
 };
 
-class ObLoadThreadPool : public share::ObThreadPool
+class ObLoadDatumRowQueue 
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 29); // 1G
-  static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
-  static const int64_t READ_PARALLEL_DEGREE = LOAD_THREAD_NUM;
+  static const int64_t TOTAL_SIZE = 4LL * (1 << 30);
+  static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
+  static const int64_t QUEUE_MAX_SIZE = (1 << 20);
+  static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
+  static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
+  void init();
+  void push(const int idx, const ObLoadDatumRow *data);
+  void push_finish(const int idx);
+  void pop(const int idx, const ObLoadDatumRow *&data, bool &is_finsh);
+  void free(const int idx, const ObLoadDatumRow *data);
+  common::ObLightyQueue queue_[WRITE_PARALLEL_DEGREE];
+  common::ObConcurrentFIFOAllocator allocators_[WRITE_PARALLEL_DEGREE];
+  bool is_ready[WRITE_PARALLEL_DEGREE];
+  int is_finish[WRITE_PARALLEL_DEGREE];
+  ObLoadDatumRow finish_flag;
+};
+
+class ObReadThreadPool : public share::ObThreadPool
+{
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
+  static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
+  static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
+public:
+  int init_file_offset(const ObString &filepath);
+  int init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue);
+  void run(int64_t idx) final;
+  int finish();
+
   int64_t file_offsets_[READ_PARALLEL_DEGREE + 1];
   ObLoadCSVPaser csv_parser_[READ_PARALLEL_DEGREE];
   ObLoadSequentialFileReader file_reader_[READ_PARALLEL_DEGREE];
   ObLoadDataBuffer buffer_[READ_PARALLEL_DEGREE];
   ObLoadRowCaster row_caster_[READ_PARALLEL_DEGREE];
+  ObLoadDatumRowQueue *datum_row_queue;
   bool is_finish[READ_PARALLEL_DEGREE];
-  bool is_writed[READ_PARALLEL_DEGREE];
-  ObLoadExternalSort external_sort_[READ_PARALLEL_DEGREE];
-  bool external_sort_lock_[READ_PARALLEL_DEGREE];
-  ObLoadSSTableWriter sstable_writer_;
   common::ObArenaAllocator allocator_;
   int64_t pviot_;
-  std::mutex sort_latch_;
-  
-  int init_file_offset(const ObString &filepath);
-  int init(ObLoadDataStmt &load_stmt);
+};
+
+class ObWriteThreadPool : public share::ObThreadPool
+{
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
+  static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
+public:
+  int init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue);
   void run(int64_t idx) final;
   int finish();
+
+  bool is_sort[WRITE_PARALLEL_DEGREE];
+  ObLoadExternalSort external_sort_;
+  ObLoadSSTableWriter sstable_writer_;
+  ObLoadDatumRowQueue *datum_row_queue;
 };
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 29); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
-  static const int64_t PARALLEL_DEGREE = LOAD_THREAD_NUM;
+  static const int64_t PARALLEL_DEGREE = READ_THREAD_NUM;
+  static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
@@ -248,7 +284,10 @@ private:
   int inner_init(ObLoadDataStmt &load_stmt);
   int do_load();
 private:
-  ObLoadThreadPool pool_;
+  ObReadThreadPool pool_;
+  ObWriteThreadPool write_pool_;
+  ObLoadDatumRowQueue datum_row_queue_;
+  common::ObArenaAllocator allocator_;
 };
 
 } // namespace sql

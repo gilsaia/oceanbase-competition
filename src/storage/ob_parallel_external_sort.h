@@ -2374,13 +2374,13 @@ int ObParallelExternalSortRound<T, Compare>::do_one_run(
         }
       }
     }
-
+    LOG_INFO("do one run log1",K(start_reader_idx));
     if (OB_SUCC(ret)) {
       if (OB_FAIL(next_round.build_fragment())) {
         STORAGE_LOG(WARN, "fail to build fragment", K(ret));
       }
     }
-
+    LOG_INFO("do one run log2",K(start_reader_idx));
     for (int64_t i = start_reader_idx; i < end_reader_idx; ++i) {
       if (nullptr != iters_[i]) {
         // will do clean up ignore return
@@ -2391,6 +2391,7 @@ int ObParallelExternalSortRound<T, Compare>::do_one_run(
         iters_[i] = nullptr;
       }
     }
+    LOG_INFO("do one run finish",K(start_reader_idx));
   }
   return ret;
 }
@@ -2607,7 +2608,7 @@ int ObParallelExternalSortRound<T, Compare>::do_merge(
         reader_idx += merge_count_;
       }
     }
-
+    STORAGE_LOG(INFO, "external sort do merge log1"); 
     if (OB_SUCC(ret)) {
       if (OB_FAIL(next_round.finish_write())) {
         STORAGE_LOG(WARN, "fail to finsh next round", K(ret));
@@ -3120,12 +3121,13 @@ int ObParallelExternalSort<T, Compare>::do_sort(bool flag)
         ++round_id;
       }
     }
-
+    LOG_INFO("do sort round finish");
     if (OB_SUCC(ret)) {
       if (OB_FAIL(curr_round_->build_merger())) {
         STORAGE_LOG(WARN, "fail to build merger", K(ret));
       }
     }
+    LOG_INFO("do sort build merger finish");
   }
   return ret;
 }
