@@ -181,13 +181,8 @@ int ObLoadCSVPaser::init(const ObDataInFileStruct &format, int64_t column_count,
     LOG_WARN("ObLoadCSVPaser init twice", KR(ret), KP(this));
   } else if (OB_FAIL(csv_parser_.init(format, column_count, collation_type,PASER_CACHE_SIZE))) {
     LOG_WARN("fail to init csv parser", KR(ret));
-  } else if (OB_FAIL(queue_allocator_.init(QUEUE_ALLOCATOR_TOTAL_SIZE,0,QUEUE_ALLOCATOR_PAGE_SIZE))) {
-    LOG_WARN("fail to init queue allocator", KR(ret));
-  } else if (OB_FAIL(blocked_queue_.init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))) {
-    LOG_WARN("fail to init blocked queue", KR(ret));
   } else {
     allocator_.set_tenant_id(MTL_ID());
-    queue_allocator_.set_tenant_id(MTL_ID());
     ObObj *objs = nullptr;
     if (OB_ISNULL(objs = static_cast<ObObj *>(allocator_.alloc(sizeof(ObObj) * column_count)))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
@@ -1201,6 +1196,39 @@ void ObLoadDatumRowQueue::pop(const int idx, const ObLoadDatumRow *&data, bool &
 void ObLoadDatumRowQueue::free(const int idx, const ObLoadDatumRow *data)
 {
   allocators_[idx].free((void*)data);
+}
+
+ObReadRowQueue::ObReadRowQueue()
+  : is_inited_(false)
+  {    
+  }
+
+ObReadRowQueue::~ObReadRowQueue()
+{
+}
+
+int ObReadRowQueue::init(ObLoadDataStmt &load_stmt)
+{
+  int ret=OB_SUCCESS;
+  if(is_inited_) {
+    ret=OB_INIT_TWICE;
+    LOG_WARN("ObReadRowQueue init twice",KR(ret),KP(this));
+  }else{
+    for(int64_t i=0;i<CAST_PARALLEL_DEGREE;++i){
+      if(OB_FAIL(queue_[i][0].init(QUEUE_CAPACITY,load_stmt,MTL_ID()))){
+        LOG_WARN("fail to init datum queue",KR(ret));
+      }else if(OB_FAIL(queue_[i][1].init(QUEUE_CAPACITY,load_stmt,MTL_ID()))){
+        LOG_WARN("fail to init recycle queue",KR(ret));
+      }else if(OB_FAIL(allocators_[i].init(QUEUE_ALLOCATOR_TOTAL_SIZE/CAST_PARALLEL_DEGREE,0,QUEUE_ALLOCATOR_PAGE_SIZE))){
+        LOG_WARN("fail to init allocator",KR(ret));
+      }else{
+        is_finished_[i]=false;
+        allocators_[i].set_tenant_id(MTL_ID());
+      }
+    }
+    is_inited_=true;
+  }
+  return ret;
 }
 
 /**

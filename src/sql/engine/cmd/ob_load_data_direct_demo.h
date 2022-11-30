@@ -10,6 +10,7 @@
 #include "storage/tx_storage/ob_ls_handle.h"
 #include "lib/queue/ob_lighty_queue.h"
 #include "lib/allocator/ob_concurrent_fifo_allocator.h"
+#include "lib/allocator/ob_fifo_allocator.h"
 
 namespace oceanbase
 {
@@ -62,9 +63,6 @@ private:
 class ObLoadCSVPaser
 {
   static const int64_t PASER_CACHE_SIZE=10;
-  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
-  static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
-  static const int64_t QUEUE_CAPACITY=256;
 public:
   ObLoadCSVPaser();
   ~ObLoadCSVPaser();
@@ -83,13 +81,11 @@ private:
   };
 private:
   common::ObArenaAllocator allocator_;
-  common::ObConcurrentFIFOAllocator queue_allocator_;
   common::ObCollationType collation_type_;
   ObCSVGeneralParser csv_parser_;
   common::ObNewRow row_;
   UnusedRowHandler unused_row_handler_;
   common::ObSEArray<ObCSVGeneralParser::LineErrRec, 1> err_records_;
-  ObLightyQueue blocked_queue_;
   bool is_inited_;
   int64_t cache_offset_;
   int64_t total_rows_;
@@ -242,18 +238,25 @@ public:
 
 class ObReadRowQueue
 {
-  static const int64_t TOTAL_SIZE = 1 * (1 << 30);
-  static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
+  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
+  static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
+  static const int64_t QUEUE_CAPACITY=256;
+
 public:
-  int init();
-  int push(const int idx);
+  ObReadRowQueue();
+  ~ObReadRowQueue();
+  int init(ObLoadDataStmt &load_stmt);
+  int push(const int idx,const common::ObNewRow *row);
   int push_finish(const int idx);
-  int pop(const int idx);
-  int free(const int idx);
-  common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE];
+  int pop(const int idx,const common::ObNewRow *&row);
+  int free(const int idx,const common::ObNewRow *row);
+  common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE][2];
   common::ObConcurrentFIFOAllocator allocators_[CAST_PARALLEL_DEGREE];
-}
+private:
+  bool is_inited_;
+  bool is_finished_[CAST_PARALLEL_DEGREE];
+};
 
 class ObReadThreadPool : public share::ObThreadPool
 {
@@ -288,7 +291,7 @@ public:
 private:
   ObLoadRowCaster row_caster_[CAST_PARALLEL_DEGREE];
   ObLoadDatumRowQueue *datum_row_queue;
-}
+};
 
 class ObWriteThreadPool : public share::ObThreadPool
 {
