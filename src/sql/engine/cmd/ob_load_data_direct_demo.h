@@ -246,7 +246,7 @@ class ObReadRowQueue
 public:
   ObReadRowQueue();
   ~ObReadRowQueue();
-  int init(ObLoadDataStmt &load_stmt);
+  int init();
   int push(const int idx,const common::ObNewRow *row);
   int push_finish(const int idx);
   int pop(const int idx,const common::ObNewRow *&row);

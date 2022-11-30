@@ -1091,7 +1091,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   int ret = OB_SUCCESS;
   // datum_row_queue_ = static_cast<ObLoadDatumRowQueue *>(allocator_.alloc(sizeof(ObLoadDatumRowQueue)));
   datum_row_queue_.init();
-  read_row_queue_.init(load_stmt);
+  read_row_queue_.init();
   if (OB_FAIL(pool_.init(load_stmt, &read_row_queue_))) {
     LOG_WARN("fail to pool init", KR(ret));
   } else if (OB_FAIL(cast_pool_.init(load_stmt,pool_.pviot_,&read_row_queue_,&datum_row_queue_))){
@@ -1208,7 +1208,7 @@ ObReadRowQueue::~ObReadRowQueue()
 {
 }
 
-int ObReadRowQueue::init(ObLoadDataStmt &load_stmt)
+int ObReadRowQueue::init()
 {
   int ret=OB_SUCCESS;
   if(is_inited_) {
@@ -1216,9 +1216,9 @@ int ObReadRowQueue::init(ObLoadDataStmt &load_stmt)
     LOG_WARN("ObReadRowQueue init twice",KR(ret),KP(this));
   }else{
     for(int64_t i=0;i<CAST_PARALLEL_DEGREE;++i){
-      if(OB_FAIL(queue_[i][0].init(QUEUE_CAPACITY,load_stmt,MTL_ID()))){
+      if(OB_FAIL(queue_[i][0].init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))){
         LOG_WARN("fail to init datum queue",KR(ret));
-      }else if(OB_FAIL(queue_[i][1].init(QUEUE_CAPACITY,load_stmt,MTL_ID()))){
+      }else if(OB_FAIL(queue_[i][1].init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))){
         LOG_WARN("fail to init recycle queue",KR(ret));
       }else if(OB_FAIL(allocators_[i].init(QUEUE_ALLOCATOR_TOTAL_SIZE/CAST_PARALLEL_DEGREE,0,QUEUE_ALLOCATOR_PAGE_SIZE))){
         LOG_WARN("fail to init allocator",KR(ret));
