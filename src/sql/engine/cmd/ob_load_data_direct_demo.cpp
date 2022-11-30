@@ -673,7 +673,7 @@ int ObLoadExternalSort::append_row_parallel(const ObLoadDatumRow &datum_row,cons
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
-  } else if (OB_UNLIKELY(is_closed_[0])) {
+  } else if (OB_UNLIKELY(is_closed_[index])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else {
@@ -1235,17 +1235,17 @@ int ObReadRowQueue::init()
 int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
 {
   int ret=OB_SUCCESS;
-  if(queue_[idx][1].size()){
-    int64_t clear_size=min(10,queue_[idx][1].size());
-    for(int64_t i=0;i<clear_size;++i){
-      void *recycle;
-      if(OB_FAIL(queue_[idx][1].pop(recycle))){
-        LOG_WARN("pop recycle row failed",KR(ret));
-      }else if(OB_FAIL(free_row(idx,recycle))){
-        LOG_WARN("free row failed",KR(ret));
-      }
-    }
-  }
+  // if(queue_[idx][1].size()){
+  //   int64_t clear_size=min(100,queue_[idx][1].size());
+  //   for(int64_t i=0;i<clear_size;++i){
+  //     void *recycle;
+  //     if(OB_FAIL(queue_[idx][1].pop(recycle))){
+  //       LOG_WARN("pop recycle row failed",KR(ret));
+  //     }else if(OB_FAIL(free_row(idx,recycle))){
+  //       LOG_WARN("free row failed",KR(ret));
+  //     }
+  //   }
+  // }
   if(OB_FAIL(OB_FAIL(copy_row(idx,row)))){
     LOG_WARN("copy row failed",KR(ret));
   }else{
@@ -1278,7 +1278,10 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
     ret=OB_ITER_END;
   }else{
     void *new_row;
-    while(OB_LIKELY(OB_ENTRY_NOT_EXIST==queue_[idx][0].pop(new_row))){
+    while(OB_FAIL(queue_[idx][0].pop(new_row))){
+      if(ret!=OB_ENTRY_NOT_EXIST){
+        break;
+      }
       PAUSE();
       if(queue_[idx][0].size()==0&&is_finished_[idx]){
         ret=OB_ITER_END;
@@ -1301,12 +1304,13 @@ int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
   // while(OB_FAIL(queue_[idx][1].push((void *)row))){
   //   PAUSE();
   // }
-  while(queue_[idx][1].size()>=ObReadRowQueue::QUEUE_CAPACITY){
-    PAUSE();
-  }
-  if(OB_FAIL(queue_[idx][1].push((void *)row))){
-    LOG_WARN("push recycle row failed",KR(ret));
-  }
+  // while(queue_[idx][1].size()>=ObReadRowQueue::QUEUE_CAPACITY){
+  //   PAUSE();
+  // }
+  // if(OB_FAIL(queue_[idx][1].push((void *)row))){
+  //   LOG_WARN("push recycle row failed",KR(ret));
+  // }
+  free_row(idx,(void *)row);
   return ret;
 }
 
@@ -1443,6 +1447,7 @@ void ObReadThreadPool::run(int64_t idx)
           ret = OB_ERR_UNEXPECTED;
           LOG_WARN("unexpected incomplate data", KR(ret));
         }
+        read_row_queue->push_finish(idx);
         ret = OB_SUCCESS;
         break;
       }
@@ -1455,7 +1460,6 @@ void ObReadThreadPool::run(int64_t idx)
           if (OB_UNLIKELY(OB_ITER_END != ret)) {
             LOG_WARN("fail to get next row", KR(ret));
           } else {
-            read_row_queue->push_finish(idx);
             ret = OB_SUCCESS;
             break;
           }
@@ -1476,6 +1480,7 @@ int ObReadThreadPool::finish()
       PAUSE();
     }
   }
+  LOG_INFO("ObReadThreadPool finish");
   return ret;
 }
 
@@ -1576,6 +1581,7 @@ int ObCastThreadPool::finish()
       PAUSE();
     }
   }
+  LOG_INFO("ObCastThreadPool finish");
   return ret;
 }
 
@@ -1697,6 +1703,7 @@ int ObWriteThreadPool::finish()
   while (!sstable_writer_.is_close()) {
     PAUSE();
   }
+  LOG_INFO("ObWriteThreadPool finish");
   return ret;
 }
 
