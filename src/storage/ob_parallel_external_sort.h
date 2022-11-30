@@ -203,6 +203,7 @@ ObFragmentWriterV2<T>::ObFragmentWriterV2()
     macro_buffer_writer_(), has_sample_item_(false), sample_item_(),
     file_io_handle_(), fd_(-1), dir_id_(-1), tenant_id_(common::OB_INVALID_ID)
 {
+  allocator_.set_tenant_id(1);
 }
 
 template<typename T>
@@ -488,6 +489,8 @@ ObFragmentReaderV2<T>::ObFragmentReaderV2()
     file_io_handles_(), handle_cursor_(-1), buf_(NULL), tenant_id_(common::OB_INVALID_ID),
     is_prefetch_end_(false), buf_size_(0), is_first_prefetch_(true)
 {
+  allocator_.set_tenant_id(1);
+  sample_allocator_.set_tenant_id(1);
 }
 
 template <typename T>
@@ -529,7 +532,7 @@ int ObFragmentReaderV2<T>::init(const int64_t fd, const int64_t dir_id, const in
       tenant_id_ = tenant_id;
       is_first_prefetch_ = true;
       buf_size_ = common::lower_align(buf_size, OB_SERVER_BLOCK_MGR.get_macro_block_size());
-      LOG_INFO("fragment reader buf size", K(buf_size_));
+      // LOG_INFO("fragment reader buf size", K(buf_size_));
       is_inited_ = true;
     }
   }
@@ -557,7 +560,7 @@ int ObFragmentReaderV2<T>::prefetch()
     ret = OB_NOT_INIT;
     STORAGE_LOG(WARN, "ObFragmentReaderV2 has not been inited", K(ret));
   } else {
-    LOG_INFO("fragment reader try alloc buf");
+    // LOG_INFO("fragment reader try alloc buf");
     if (nullptr == buf_) {
       if (OB_ISNULL(buf_ = static_cast<char *>(allocator_.alloc(buf_size_)))) {
         ret = common::OB_ALLOCATE_MEMORY_FAILED;
@@ -1045,6 +1048,7 @@ ObExternalSortRound<T, Compare>::ObExternalSortRound()
     allocator_(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE),
     tenant_id_(common::OB_INVALID_ID), dir_id_(-1), is_writer_opened_(false)
 {
+  allocator_.set_tenant_id(1);
 }
 
 template<typename T, typename Compare>
@@ -1410,178 +1414,135 @@ int ObMemoryFragmentIterator<T>::get_next_item(const T *&item)
   return ret;
 }
 
-template<typename T, typename Compare>
-class ObFragmentMergeBuffer
-{
-public:
-  typedef ObFragmentMerge<T, Compare> FragmentMerge;
-  typedef std::queue<const T *> Queue;
-  ObFragmentMergeBuffer();
-  virtual ~ObFragmentMergeBuffer();
-  int init(const int64_t buf_limit, FragmentMerge *fragment_merge);
-  int get_next_item(const T *&item);
-  bool is_full();
+// template<typename T, typename Compare>
+// class ObFragmentMergeBuffer
+// {
+// public:
+//   typedef ObFragmentMerge<T, Compare> FragmentMerge;
+//   typedef std::queue<const T *> Queue;
+//   ObFragmentMergeBuffer();
+//   virtual ~ObFragmentMergeBuffer();
+//   int init(const int64_t buf_limit, FragmentMerge *fragment_merge);
+//   int get_next_item(const T *&item);
+//   bool is_full();
 
-  // copy and add to queue
-  int add_item(const T &item);
-  void set_finish() { merge_finish_ = true; };
-  void reset();
-private:
-  static const int64_t BUFFER_NUM = 2;
-  int64_t buf_limit_;
-  bool merge_finish_;
-  FragmentMerge *fragment_merge_;
-  common::ObArenaAllocator *allocators_[BUFFER_NUM];
-  Queue queue_;
-  std::mutex latch_;
-  int64_t produce_cursor_;
-  int64_t consume_cursor_;
-};
+//   // copy and add to queue
+//   int add_item(const T &item);
+//   void set_finish() { merge_finish_ = true; };
+//   void reset();
+// private:
+//   static const int64_t BUFFER_NUM = 2;
+//   int64_t buf_limit_;
+//   bool merge_finish_;
+//   FragmentMerge *fragment_merge_;
+//   common::ObArenaAllocator *allocators_[BUFFER_NUM];
+//   Queue queue_;
+//   std::mutex latch_;
+//   int64_t produce_cursor_;
+//   int64_t consume_cursor_;
+// };
 
-template<typename T, typename Compare>
-ObFragmentMergeBuffer<T, Compare>::ObFragmentMergeBuffer() :
-  buf_limit_(0), merge_finish_(false), fragment_merge_(NULL), produce_cursor_(0), consume_cursor_(0)
-{
-  for (int i = 0; i < BUFFER_NUM; i++) {
-    allocators_[i] = new common::ObArenaAllocator(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE);
-  }
-}
+// template<typename T, typename Compare>
+// ObFragmentMergeBuffer<T, Compare>::ObFragmentMergeBuffer() :
+//   buf_limit_(0), merge_finish_(false), fragment_merge_(NULL), produce_cursor_(0), consume_cursor_(0)
+// {
+//   for (int i = 0; i < BUFFER_NUM; i++) {
+//     allocators_[i] = new common::ObArenaAllocator(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE);
+//   }
+// }
 
-template<typename T, typename Compare>
-ObFragmentMergeBuffer<T, Compare>::~ObFragmentMergeBuffer()
-{
+// template<typename T, typename Compare>
+// ObFragmentMergeBuffer<T, Compare>::~ObFragmentMergeBuffer()
+// {
 
-}
+// }
 
-template<typename T, typename Compare>
-int ObFragmentMergeBuffer<T, Compare>::init(const int64_t buf_limit, FragmentMerge *fragment_merge)
-{
-  int ret = common::OB_SUCCESS;
-  buf_limit_ = buf_limit;
-  fragment_merge_ = fragment_merge;
-  produce_cursor_ = 0;
-  consume_cursor_ = 0;
-  return ret;
-}
+// template<typename T, typename Compare>
+// int ObFragmentMergeBuffer<T, Compare>::init(const int64_t buf_limit, FragmentMerge *fragment_merge)
+// {
+//   int ret = common::OB_SUCCESS;
+//   buf_limit_ = buf_limit;
+//   fragment_merge_ = fragment_merge;
+//   produce_cursor_ = 0;
+//   consume_cursor_ = 0;
+//   return ret;
+// }
 
-template<typename T, typename Compare>
-int ObFragmentMergeBuffer<T, Compare>::get_next_item(const T *&item)
-{
-  int ret = common::OB_SUCCESS;
-  while(true) {
-    {
-      std::lock_guard<std::mutex> lk(latch_);
-      if (queue_.empty() && merge_finish_) {
-        LOG_INFO("get next item iter end");
-        return common::OB_ITER_END;
-      } else if (!queue_.empty()) {
-        item = queue_.front();
-        queue_.pop();
-        if (item == NULL) {
-          allocators_[consume_cursor_]->reuse();
-          consume_cursor_ = (consume_cursor_ + 1) % BUFFER_NUM;
-        } else {
-          return ret;
-        }
-      }
-    }
-    usleep(10);
-  }
-}
+// template<typename T, typename Compare>
+// int ObFragmentMergeBuffer<T, Compare>::get_next_item(const T *&item)
+// {
+//   int ret = common::OB_SUCCESS;
+//   while(true) {
+//     {
+//       std::lock_guard<std::mutex> lk(latch_);
+//       if (queue_.empty() && merge_finish_) {
+//         LOG_INFO("get next item iter end");
+//         return common::OB_ITER_END;
+//       } else if (!queue_.empty()) {
+//         item = queue_.front();
+//         queue_.pop();
+//         if (item == NULL) {
+//           allocators_[consume_cursor_]->reuse();
+//           consume_cursor_ = (consume_cursor_ + 1) % BUFFER_NUM;
+//         } else {
+//           return ret;
+//         }
+//       }
+//     }
+//     usleep(10);
+//   }
+// }
 
-template<typename T, typename Compare>
-int ObFragmentMergeBuffer<T, Compare>::add_item(const T &item)
-{
-  int ret = common::OB_SUCCESS;
+// template<typename T, typename Compare>
+// int ObFragmentMergeBuffer<T, Compare>::add_item(const T &item)
+// {
+//   int ret = common::OB_SUCCESS;
 
-  const int64_t item_size = sizeof(T) + item.get_deep_copy_size();
-  char *buf = NULL;
-  T *new_item = NULL;
-  common::ObArenaAllocator *allocator = allocators_[produce_cursor_];
-  if (allocator->used() + item_size > buf_limit_) {
-    {
-      std::lock_guard<std::mutex> lk(latch_);
-      queue_.push(static_cast<const T *>(NULL));
-    }
-    produce_cursor_ = (produce_cursor_ + 1) % BUFFER_NUM;
-    allocator = allocators_[produce_cursor_];
-    while (produce_cursor_ == consume_cursor_) {
-      LOG_INFO("all allocators are full, wait");
-      usleep(100);
-    }
-  }
+//   const int64_t item_size = sizeof(T) + item.get_deep_copy_size();
+//   char *buf = NULL;
+//   T *new_item = NULL;
+//   common::ObArenaAllocator *allocator = allocators_[produce_cursor_];
+//   if (allocator->used() + item_size > buf_limit_) {
+//     {
+//       std::lock_guard<std::mutex> lk(latch_);
+//       queue_.push(static_cast<const T *>(NULL));
+//     }
+//     produce_cursor_ = (produce_cursor_ + 1) % BUFFER_NUM;
+//     allocator = allocators_[produce_cursor_];
+//     while (produce_cursor_ == consume_cursor_) {
+//       LOG_INFO("all allocators are full, wait");
+//       usleep(100);
+//     }
+//   }
 
-  if (OB_ISNULL(buf = static_cast<char *>(allocator->alloc(item_size)))) {
-    LOG_WARN("alloc null", K(ret));
-  } else if (OB_ISNULL(new_item = new (buf) T())) {
-    LOG_WARN("new item is null", K(ret));
-  } else {
-    int64_t buf_pos = sizeof(T);
-    if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
-      LOG_WARN("deep copy fail", K(ret));
-    } else {
-      std::lock_guard<std::mutex> lk(latch_);
-      queue_.push(new_item);
-    }
-  }
-  return ret;
-}
+//   if (OB_ISNULL(buf = static_cast<char *>(allocator->alloc(item_size)))) {
+//     LOG_WARN("alloc null", K(ret));
+//   } else if (OB_ISNULL(new_item = new (buf) T())) {
+//     LOG_WARN("new item is null", K(ret));
+//   } else {
+//     int64_t buf_pos = sizeof(T);
+//     if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
+//       LOG_WARN("deep copy fail", K(ret));
+//     } else {
+//       std::lock_guard<std::mutex> lk(latch_);
+//       queue_.push(new_item);
+//     }
+//   }
+//   return ret;
+// }
 
-template<typename T, typename Compare>
-void ObFragmentMergeBuffer<T, Compare>::reset()
-{
-  if (!queue_.empty()) {
-    LOG_WARN("queue still has item", K(queue_.size()));
-  }
-  for (int i = 0; i < BUFFER_NUM; i++) {
-    allocators_[i]->reset();
-  }
-}
+// template<typename T, typename Compare>
+// void ObFragmentMergeBuffer<T, Compare>::reset()
+// {
+//   if (!queue_.empty()) {
+//     LOG_WARN("queue still has item", K(queue_.size()));
+//   }
+//   for (int i = 0; i < BUFFER_NUM; i++) {
+//     allocators_[i]->reset();
+//   }
+// }
 
-template<typename T, typename Compare>
-class ObMergeBufferPool : public share::ObThreadPool
-{
-  typedef ObFragmentMergeBuffer<T, Compare> FragmentMergeBuffer;
-  typedef ObFragmentMerge<T, Compare> FragmentMerge;
-public:
-  void run(int64_t idx) final
-  {
-    common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
-    share::ObTenantBase *tenant_base = MTL_CTX();
-    lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
-    lib::Worker::set_compatibility_mode(mode);
-    LOG_INFO("thread init finish");
-    const T *item = NULL; 
-    int ret = common::OB_SUCCESS;
-    while(!ATOMIC_LOAD(&has_set_stop())) {
-      if (OB_FAIL(merge_->get_next_item(item))) {
-        if (common::OB_ITER_END != ret) {
-          STORAGE_LOG(WARN, "fail to get next item", K(ret));
-        } else {
-          merge_buffer_->set_finish();
-          STORAGE_LOG(INFO, "merge iter end", K(ret));
-          return;
-        }
-      }
-      if (OB_FAIL(merge_buffer_->add_item(*item))) {
-         LOG_WARN("thread encounter error", K(ret));
-         return;
-      }
-    }
-  }
 
-  int init(FragmentMerge *merge, FragmentMergeBuffer *merge_buffer)
-  {
-    merge_ = merge;
-    merge_buffer_ = merge_buffer;
-    merge_finish_ = false;
-    return common::OB_SUCCESS;
-  }
-private:
-  FragmentMerge *merge_;
-  FragmentMergeBuffer *merge_buffer_;
-  bool merge_finish_;
-};
 
 template<typename T, typename Compare>
 class ObMemorySortRound
@@ -1655,6 +1616,7 @@ int ObMemorySortRound<T, Compare>::init(
     compare_ = compare;
     next_round_ = next_round;
     iter_ = NULL;
+    allocator_.set_tenant_id(1);
   }
   return ret;
 }
@@ -2105,10 +2067,168 @@ int ObExternalSort<T, Compare>::transfer_final_sorted_fragment_iter(
   return ret;
 }
 
+template<typename T>
+class ObMergeItemQueue
+{
+private:
+  static const int64_t QUEUE_CAPACITY = (1LL << 10);
+  static const int64_t TOTAL_LIMIT = (1LL << 30);
+  static const int64_t HOLD_LIMIT = (1LL << 30);
+  static const int64_t PAGE_SIZE = common::OB_MALLOC_BIG_BLOCK_SIZE;
+  int64_t buf_mem_limit_;
+  bool is_finish_;
+  common::ObLightyQueue queue_;
+  common::ObConcurrentFIFOAllocator allocator_;
+public:
+  ObMergeItemQueue();
+  virtual ~ObMergeItemQueue();
+  void init(int64_t buf_mem_limit);
+  void reset();
+  int push(const T &item);
+  int pop(const T *&item);
+  void free(const T *item);
+  void set_finish();
+};
+
+template<typename T>
+ObMergeItemQueue<T>::ObMergeItemQueue() : 
+  buf_mem_limit_(0), is_finish_(false)
+{ 
+}
+
+template<typename T>
+ObMergeItemQueue<T>::~ObMergeItemQueue()
+{
+}
+
+template<typename T>
+void ObMergeItemQueue<T>::init(int64_t buf_mem_limit)
+{
+  queue_.init(QUEUE_CAPACITY);
+  allocator_.init(TOTAL_LIMIT, HOLD_LIMIT, PAGE_SIZE);
+  allocator_.set_tenant_id(1);
+  buf_mem_limit_ = buf_mem_limit;
+  is_finish_ = false;
+  LOG_INFO("buf mem limit",K(buf_mem_limit_));
+}
+
+template<typename T>
+void ObMergeItemQueue<T>::reset()
+{
+  queue_.reset();
+  allocator_.reset();
+}
+
+template<typename T>
+void ObMergeItemQueue<T>::set_finish()
+{
+  is_finish_ = true;
+}
+
+template<typename T>
+int ObMergeItemQueue<T>::pop(const T *&item)
+{
+  int ret = common::OB_SUCCESS;
+  void *temp = NULL;
+  while(common::OB_SUCCESS != queue_.pop(temp)) {
+    if (OB_UNLIKELY(is_finish_)) {
+      return common::OB_ITER_END;
+    }
+  }
+  item = (const T *)temp;
+  return common::OB_SUCCESS;
+}
+
+template<typename T>
+void ObMergeItemQueue<T>::free(const T *item)
+{
+  allocator_.free((void *)item);
+}
+
+template<typename T>
+int ObMergeItemQueue<T>::push(const T &item)
+{
+  int ret = common::OB_SUCCESS;
+  char *buf = NULL;
+  T *new_item = NULL;
+  const int64_t item_size = sizeof(T) + item.get_deep_copy_size();
+
+  if (item_size > buf_mem_limit_) {
+    STORAGE_LOG(WARN, "invalid item size, must not larger than buf memory limit",
+        K(ret), K(item_size), K(buf_mem_limit_));
+  } else {
+    LOG_INFO("queue used", K(allocator_.used()));
+    while (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
+      usleep(100);
+    }
+    if (OB_ISNULL(new_item = new (buf) T())) {
+      ret = common::OB_ALLOCATE_MEMORY_FAILED;
+      STORAGE_LOG(WARN, "fail to placement new item", K(ret));
+    } else {
+      int64_t buf_pos = sizeof(T);
+      if (OB_FAIL(new_item->deep_copy(item, buf, item_size, buf_pos))) {
+        STORAGE_LOG(WARN, "fail to deep copy item", K(ret));
+      } else {
+        while (OB_SUCCESS != queue_.push((void *)new_item)) {
+          usleep(100);
+        }
+      }
+      LOG_INFO("success push item to queue");
+    }
+  }
+  LOG_INFO("finish push queue");
+  
+  return ret;
+}
+
+template<typename T, typename Compare>
+class ObMergeBufferPool : public share::ObThreadPool
+{
+  typedef ObMergeItemQueue<T> MergeItemQueue;
+  typedef ObFragmentMerge<T, Compare> FragmentMerge;
+public:
+  void run(int64_t idx) final
+  {
+    common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
+    share::ObTenantBase *tenant_base = MTL_CTX();
+    lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
+    lib::Worker::set_compatibility_mode(mode);
+    LOG_INFO("thread init finish");
+    const T *item = NULL; 
+    int ret = common::OB_SUCCESS;
+    while(!ATOMIC_LOAD(&has_set_stop())) {
+      if (OB_FAIL(merge_->get_next_item(item))) {
+        if (common::OB_ITER_END != ret) {
+          STORAGE_LOG(WARN, "fail to get next item", K(ret));
+        } else {
+          queue_->set_finish();
+          STORAGE_LOG(INFO, "merge iter end", K(ret));
+          return;
+        }
+      }
+      if (OB_FAIL(queue_->push(*item))) {
+         LOG_WARN("thread encounter error", K(ret));
+         return;
+      }
+    }
+  }
+
+  int init(FragmentMerge *merge, MergeItemQueue *queue)
+  {
+    merge_ = merge;
+    queue_ = queue;
+    return common::OB_SUCCESS;
+  }
+private:
+  FragmentMerge *merge_;
+  MergeItemQueue *queue_;
+};
+
 constexpr int64_t CONCURRENT_NUM = 4;
 template<typename T, typename Compare>
 class ObParallelExternalSortRound
-{
+{ 
+
 public:
   ObParallelExternalSortRound();
   virtual ~ObParallelExternalSortRound();
@@ -2134,9 +2254,10 @@ private:
   typedef common::ObArray<FragmentIterator *> FragmentIteratorList;
   typedef ObFragmentWriterV2<T> FragmentWriter;
   typedef ObFragmentMerge<T, Compare> FragmentMerger;
-  typedef ObFragmentMergeBuffer<T, Compare> FragmentMergeBuffer;
+  // typedef ObFragmentMergeBuffer<T, Compare> FragmentMergeBuffer;
+  typedef ObMergeItemQueue<T> MergeItemQueue;
   typedef ObMergeBufferPool<T, Compare> MergeBufferPool;
-  const static int64_t MERGE_BUF_LIMIT = 2 * 1024 * 1024; // 2M
+  static const int64_t QUEUE_MEM_LIMIT = (1LL << 20);
   bool is_inited_;
   int64_t file_buf_size_;
   FragmentIteratorList iters_;
@@ -2153,8 +2274,10 @@ private:
   FragmentWriter merge_writer_;
   int64_t merge_dir_id_;
   bool is_merge_writer_opened_;
-  // FragmentMergeBuffer merge_buffer_;
-  // MergeBufferPool merge_buffer_pool_;
+  MergeItemQueue queue_;
+  MergeBufferPool merge_buffer_pool_;
+  bool is_thread_start_;
+  const T *pre_item_;
   
 };
 
@@ -2162,12 +2285,13 @@ template<typename T, typename Compare>
 ObParallelExternalSortRound<T, Compare>::ObParallelExternalSortRound()
   : is_inited_(false), file_buf_size_(0), iters_(),
     expire_timestamp_(0), compare_(NULL), merger_(), allocator_(common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER, common::OB_MALLOC_BIG_BLOCK_SIZE),
-    tenant_id_(common::OB_INVALID_ID), merge_count_(0), merge_dir_id_(-1), is_merge_writer_opened_(false)
+    tenant_id_(common::OB_INVALID_ID), merge_count_(0), merge_dir_id_(-1), is_merge_writer_opened_(false), is_thread_start_(false), pre_item_(NULL)
 {
   for (int i = 0; i < CONCURRENT_NUM; i++) {
     dir_ids_[i] = -1;
     is_writer_opened_[i] = false;
   }
+  allocator_.set_tenant_id(1);
 }
 
 template<typename T, typename Compare>
@@ -2202,12 +2326,14 @@ int ObParallelExternalSortRound<T, Compare>::init(const int64_t merge_count, con
     STORAGE_LOG(WARN, "fail to alloc dir", K(ret));
   }
   is_inited_ = true;
+  is_thread_start_ = false;
   merge_count_ = merge_count;
   file_buf_size_ = file_buf_size;
   expire_timestamp_ = expire_timestamp;
   compare_ = compare;
   tenant_id_ = tenant_id;
   merger_.reset();
+  pre_item_ = NULL;
   return ret;
 }
 
@@ -2425,19 +2551,30 @@ int ObParallelExternalSortRound<T, Compare>::get_next_item(const T *&item)
   }
    else if (!merger_.is_opened() && OB_FAIL(merger_.open())) {
     STORAGE_LOG(WARN, "fail to open merger", K(ret));
+  } else if (!is_thread_start_) {
+    queue_.init(QUEUE_MEM_LIMIT);
+    merge_buffer_pool_.init(&merger_, &queue_);
+    merge_buffer_pool_.set_thread_count(1);
+    merge_buffer_pool_.set_run_wrapper(MTL_CTX());
+    merge_buffer_pool_.start(); 
+    is_thread_start_ = true;
   }
-  // merge_buffer_.init(MERGE_BUF_LIMIT, &merger_);
-  // merge_buffer_pool_.init(&merger_, &merge_buffer_);
-  // merge_buffer_pool_.set_thread_count(1);
-  // merge_buffer_pool_.set_run_wrapper(MTL_CTX());
-  // merge_buffer_pool_.start();
 
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(merger_.get_next_item(item))) {
+    // if (OB_FAIL(merger_.get_next_item(item))) {
+    //   if (common::OB_ITER_END != ret) {
+    //     STORAGE_LOG(WARN, "fail to get next item", K(ret));
+    //   }
+    // }
+    if (pre_item_) {
+      queue_.free(pre_item_);
+    }
+    if (OB_FAIL(queue_.pop(item))) {
       if (common::OB_ITER_END != ret) {
         STORAGE_LOG(WARN, "fail to get next item", K(ret));
       }
     }
+    pre_item_ = item;
   }
   return ret;
 }
@@ -2525,8 +2662,8 @@ int ObParallelExternalSortRound<T, Compare>::clean_up()
     STORAGE_LOG(WARN, "fail to do writer finish", K(tmp_ret));
     ret = (common::OB_SUCCESS == ret) ? tmp_ret : ret;
   }
-  // merge_buffer_pool_.stop();
-  // merge_buffer_pool_.wait();
+  merge_buffer_pool_.stop();
+  merge_buffer_pool_.wait();
   is_inited_ = false;
   file_buf_size_ = 0;
   iters_.reset();
@@ -2534,7 +2671,7 @@ int ObParallelExternalSortRound<T, Compare>::clean_up()
   compare_ = NULL;
   merger_.reset();
   allocator_.reset();
-  // merge_buffer_.reset();
+  queue_.reset();
   
   return ret;
 }
@@ -2640,6 +2777,7 @@ public:
     compare_ = compare;
     for (int i = 0; i < CONCURRENT_NUM; i++) {
       has_task_[i] = false;
+      allocators_[i]->set_tenant_id(1);
     }
     return common::OB_SUCCESS;
   }
@@ -2697,6 +2835,7 @@ ObParallelMemorySortRound<T, Compare>::ObParallelMemorySortRound()
   
   for (int i = 0; i < CONCURRENT_NUM; ++i) {
     allocators_[i] = new common::ObArenaAllocator("PMS", common::OB_MALLOC_BIG_BLOCK_SIZE);
+    allocators_[i]->set_tenant_id(1);
     item_lists_[i] = new common::ObVector<T *>(NULL, common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER);
   }
 }

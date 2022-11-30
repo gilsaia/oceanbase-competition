@@ -26,6 +26,7 @@ using namespace share::schema;
 ObLoadDataBuffer::ObLoadDataBuffer()
   : allocator_(ObModIds::OB_SQL_LOAD_DATA), data_(nullptr), begin_pos_(0), end_pos_(0), capacity_(0)
 {
+  allocator_.set_tenant_id(1);
 }
 
 ObLoadDataBuffer::~ObLoadDataBuffer()
@@ -154,6 +155,7 @@ int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
 ObLoadCSVPaser::ObLoadCSVPaser()
   : allocator_(ObModIds::OB_SQL_LOAD_DATA), collation_type_(CS_TYPE_INVALID), is_inited_(false)
 {
+  allocator_.set_tenant_id(1);
 }
 
 ObLoadCSVPaser::~ObLoadCSVPaser()
@@ -241,6 +243,7 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
 ObLoadDatumRow::ObLoadDatumRow()
   : allocator_(ObModIds::OB_SQL_LOAD_DATA), capacity_(0), count_(0), datums_(nullptr)
 {
+  allocator_.set_tenant_id(1);
 }
 
 ObLoadDatumRow::~ObLoadDatumRow()
@@ -433,6 +436,7 @@ ObLoadRowCaster::ObLoadRowCaster()
     cast_allocator_(ObModIds::OB_SQL_LOAD_DATA),
     is_inited_(false)
 {
+  cast_allocator_.set_tenant_id(1);
 }
 
 ObLoadRowCaster::~ObLoadRowCaster()
@@ -581,6 +585,10 @@ int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, co
 ObLoadExternalSort::ObLoadExternalSort()
   : is_inited_(false)
 {
+  for (int i = 0; i < EXTERNAL_PARALLEL_DEGREE; ++i) {
+    allocator_[i].set_tenant_id(1);
+    allocator_[i].set_label(ObModIds::OB_SQL_LOAD_DATA);
+  }
 }
 
 ObLoadExternalSort::~ObLoadExternalSort()
@@ -1102,6 +1110,7 @@ void ObLoadDatumRowQueue::init()
     queue_[i].init(QUEUE_MAX_SIZE);
     allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
                       MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
+    allocators_[i].set_tenant_id(1);
     is_ready[i] = false;
     is_finish[i] = 0;
   }
@@ -1273,6 +1282,7 @@ int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue
     }
   }
   datum_row_queue = queue;
+  allocator_.set_tenant_id(1);
   LOG_INFO("ObReadThreadPool pool init finish", KR(ret));
   return ret;
 }
