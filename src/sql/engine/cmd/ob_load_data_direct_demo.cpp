@@ -1236,7 +1236,7 @@ int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
 {
   int ret=OB_SUCCESS;
   if(queue_[idx][1].size()){
-    int64_t clear_size=min(3,queue_[idx][1].size());
+    int64_t clear_size=min(10,queue_[idx][1].size());
     for(int64_t i=0;i<clear_size;++i){
       void *recycle;
       if(OB_FAIL(queue_[idx][1].pop(recycle))){
@@ -1248,8 +1248,13 @@ int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
   }
   if(OB_FAIL(OB_FAIL(copy_row(idx,row)))){
     LOG_WARN("copy row failed",KR(ret));
-  }else if(OB_FAIL(queue_[idx][0].push((void *)row))){
-    LOG_WARN("push row failed",KR(ret));
+  }else{
+    while(queue_[idx][0].size()>=ObReadRowQueue::QUEUE_CAPACITY){
+      PAUSE();
+    }
+    if(OB_FAIL(queue_[idx][0].push((void *)row))){
+      LOG_WARN("push row failed",KR(ret));
+    }
   }
   return ret;
 }
@@ -1296,6 +1301,9 @@ int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
   // while(OB_FAIL(queue_[idx][1].push((void *)row))){
   //   PAUSE();
   // }
+  while(queue_[idx][1].size()>=ObReadRowQueue::QUEUE_CAPACITY){
+    PAUSE();
+  }
   if(OB_FAIL(queue_[idx][1].push((void *)row))){
     LOG_WARN("push recycle row failed",KR(ret));
   }
