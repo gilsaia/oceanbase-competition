@@ -2358,7 +2358,7 @@ int ObParallelExternalSortRound<T, Compare>::do_one_run(
         STORAGE_LOG(WARN, "fail to open merger", K(ret));
       }
     }
-
+    LOG_INFO("do one run log0",K(start_reader_idx));
     while (OB_SUCC(ret)) {
       share::dag_yield();
       if (OB_FAIL(merger_.get_next_item(item))) {
