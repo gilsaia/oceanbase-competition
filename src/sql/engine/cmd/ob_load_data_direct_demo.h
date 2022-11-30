@@ -250,10 +250,12 @@ public:
   int push(const int idx,const common::ObNewRow *row);
   int push_finish(const int idx);
   int pop(const int idx,const common::ObNewRow *&row);
-  int free(const int idx,const common::ObNewRow *row);
+  int free(const int idx,const common::ObNewRow *&row);
   common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE][2];
   common::ObConcurrentFIFOAllocator allocators_[CAST_PARALLEL_DEGREE];
 private:
+  int copy_row(const int idx,const common::ObNewRow *&row);
+  int free_row(const int idx,void *row);
   bool is_inited_;
   bool is_finished_[CAST_PARALLEL_DEGREE];
 };

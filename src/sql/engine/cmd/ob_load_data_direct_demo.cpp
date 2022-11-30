@@ -1231,6 +1231,85 @@ int ObReadRowQueue::init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
+int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
+{
+  int ret=OB_SUCCESS;
+  if(queue_[idx][1].size()){
+    int64_t clear_size=min(3,queue_[idx][1].size());
+    for(int64_t i=0;i<clear_size;++i){
+      void *recycle;
+      if(OB_FAIL(queue_[idx][1].pop(recycle))){
+        LOG_WARN("pop recycle row failed",KR(ret));
+      }else if(OB_FAIL(free_row(idx,recycle))){
+        LOG_WARN("free row failed",KR(ret));
+      }
+    }
+  }
+  if(OB_FAIL(copy_row(idx,row))){
+    LOG_WARN("copy row failed",KR(ret));
+  }else if(queue_[idx][0].push(static_cast<void *>(row))){
+    LOG_WARN("push row failed",KR(ret));
+  }
+  return ret;
+}
+
+int ObReadRowQueue::push_finish(const int idx)
+{
+  int ret=OB_SUCCESS;
+  if(!is_inited_){
+    ret = OB_NOT_INIT;
+    LOG_WARM("ObReadRowQueue not init",KR(ret),KP(this));
+  }else{
+    is_finished_[idx]=true;
+  }
+  return ret;
+}
+
+int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
+{
+  int ret=OB_SUCCESS;
+  if(queue_[idx][0].size()==0&&is_finished_[idx]){
+    ret=OB_ITER_END;
+  }else{
+    if(OB_FAIL(queue_[idx][0].pop(static_cast<void *>(row)))){
+      LOG_WARN("pop row fail",KR(ret));
+    }
+  }
+  return ret;
+}
+
+int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
+{
+  int ret=OB_SUCCESS;
+  if(OB_FAIL(queue_[idx][1].push(static_cast<void *>(row)))){
+    OB_WARN("push recycle row failed",KR(ret));
+  }
+  return ret;
+}
+
+int ObReadRowQueue::copy_row(const int idx,const common::ObNewRow *&row)
+{
+  int ret=OB_SUCCESS;
+  common::ObNewRow *new_row=nullptr;
+  const int64_t item_size=sizeof(common::ObNewRow)+row->get_deep_copy_size();
+  char *buf=nullptr;
+  while(OB_ISNULL(buf = static_cast<char *>(allocators_[idx].alloc(item_size)))){
+    PAUSE();
+  }
+  if(OB_ISNULL(new_row=new (buf) ObNewRow())){
+    LOG_WARN("new item is null",KR(ret));
+  }else if(OB_FAIL(new_row->deep_copy(*row,buf,item_size,sizeof(common::ObNewRow)))){
+    LOG_WARN("deep copy fail",KR(ret));
+  }
+  row=new_row;
+  return ret;
+}
+
+int ObReadRowQueue::free_row(const int idx,const void *row)
+{
+  allocators_[idx].free(row);
+}
+
 /**
  * ObReadThreadPool
  */
