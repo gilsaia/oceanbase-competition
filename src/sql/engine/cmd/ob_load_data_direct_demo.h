@@ -211,7 +211,7 @@ private:
 
 class ObLoadThreadPool : public share::ObThreadPool
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 27); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 29); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t READ_PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
@@ -237,7 +237,7 @@ public:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 27); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 29); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t PARALLEL_DEGREE = LOAD_THREAD_NUM;
 public:
