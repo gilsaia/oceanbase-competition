@@ -1246,9 +1246,9 @@ int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
       }
     }
   }
-  if(OB_FAIL(copy_row(idx,row))){
+  if(OB_FAIL(OB_FAIL(copy_row(idx,row)))){
     LOG_WARN("copy row failed",KR(ret));
-  }else if(queue_[idx][0].push((void *)row)){
+  }else if(OB_FAIL(queue_[idx][0].push((void *)row))){
     LOG_WARN("push row failed",KR(ret));
   }
   return ret;
@@ -1273,11 +1273,19 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
     ret=OB_ITER_END;
   }else{
     void *new_row;
-    if(OB_FAIL(queue_[idx][0].pop(new_row))){
-      LOG_WARN("pop row fail",KR(ret));
-    }else{
-      row=static_cast<const common::ObNewRow *>(new_row);
+    while(OB_LIKELY(OB_ENTRY_NOT_EXIST==queue_[idx][0].pop(new_row))){
+      PAUSE();
+      if(queue_[idx][0].size()==0&&is_finished_[idx]){
+        ret=OB_ITER_END;
+        break;
+      }
     }
+    row=static_cast<const common::ObNewRow *>(new_row);
+    // if(OB_FAIL(queue_[idx][0].pop(new_row))){
+    //   LOG_WARN("pop row fail",KR(ret));
+    // }else{
+    //   row=static_cast<const common::ObNewRow *>(new_row);
+    // }
   }
   return ret;
 }
@@ -1285,6 +1293,9 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
 int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
+  // while(OB_FAIL(queue_[idx][1].push((void *)row))){
+  //   PAUSE();
+  // }
   if(OB_FAIL(queue_[idx][1].push((void *)row))){
     LOG_WARN("push recycle row failed",KR(ret));
   }
