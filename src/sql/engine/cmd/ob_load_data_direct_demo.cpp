@@ -1247,7 +1247,7 @@ int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
   }
   if(OB_FAIL(copy_row(idx,row))){
     LOG_WARN("copy row failed",KR(ret));
-  }else if(queue_[idx][0].push(static_cast<void *>(row))){
+  }else if(queue_[idx][0].push((void *)row)){
     LOG_WARN("push row failed",KR(ret));
   }
   return ret;
@@ -1258,7 +1258,7 @@ int ObReadRowQueue::push_finish(const int idx)
   int ret=OB_SUCCESS;
   if(!is_inited_){
     ret = OB_NOT_INIT;
-    LOG_WARM("ObReadRowQueue not init",KR(ret),KP(this));
+    LOG_WARN("ObReadRowQueue not init",KR(ret),KP(this));
   }else{
     is_finished_[idx]=true;
   }
@@ -1271,8 +1271,11 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
   if(queue_[idx][0].size()==0&&is_finished_[idx]){
     ret=OB_ITER_END;
   }else{
-    if(OB_FAIL(queue_[idx][0].pop(static_cast<void *>(row)))){
+    void *new_row;
+    if(OB_FAIL(queue_[idx][0].pop(new_row))){
       LOG_WARN("pop row fail",KR(ret));
+    }else{
+      row=static_cast<const common::ObNewRow *>(new_row);
     }
   }
   return ret;
@@ -1281,8 +1284,8 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
 int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
-  if(OB_FAIL(queue_[idx][1].push(static_cast<void *>(row)))){
-    OB_WARN("push recycle row failed",KR(ret));
+  if(OB_FAIL(queue_[idx][1].push((void *)row))){
+    LOG_WARN("push recycle row failed",KR(ret));
   }
   return ret;
 }
@@ -1291,23 +1294,25 @@ int ObReadRowQueue::copy_row(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
   common::ObNewRow *new_row=nullptr;
-  const int64_t item_size=sizeof(common::ObNewRow)+row->get_deep_copy_size();
+  int64_t buf_size=sizeof(common::ObNewRow);
+  const int64_t item_size=buf_size+row->get_deep_copy_size();
   char *buf=nullptr;
   while(OB_ISNULL(buf = static_cast<char *>(allocators_[idx].alloc(item_size)))){
     PAUSE();
   }
   if(OB_ISNULL(new_row=new (buf) ObNewRow())){
     LOG_WARN("new item is null",KR(ret));
-  }else if(OB_FAIL(new_row->deep_copy(*row,buf,item_size,sizeof(common::ObNewRow)))){
+  }else if(OB_FAIL(new_row->deep_copy(*row,buf,item_size,buf_size))){
     LOG_WARN("deep copy fail",KR(ret));
   }
   row=new_row;
   return ret;
 }
 
-int ObReadRowQueue::free_row(const int idx,const void *row)
+int ObReadRowQueue::free_row(const int idx,void *row)
 {
   allocators_[idx].free(row);
+  return OB_SUCCESS;
 }
 
 /**
@@ -1493,55 +1498,20 @@ int ObReadThreadPool::finish()
  * ObCastThreadPool
 */
 
-int ObCastThreadPool::init(ObLoadDataStmt &load_stmt,ObLoadDatumRowQueue *queue,)
+int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue)
 {
-  int ret = common::OB_SUCCESS;
-  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
-  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
-    load_stmt.get_field_or_var_list();
-  const uint64_t tenant_id = load_args.tenant_id_;
-  const uint64_t table_id = load_args.table_id_;
-  ObSchemaGetterGuard schema_guard;
-  const ObTableSchema *table_schema = nullptr;
-  if (OB_FAIL(ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id,
-                                                                                  schema_guard))) {
-    LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
-  } else if (OB_FAIL(schema_guard.get_table_schema(tenant_id, table_id, table_schema))) {
-    LOG_WARN("fail to get table schema", KR(ret), K(tenant_id), K(table_id));
-  } else if (OB_ISNULL(table_schema)) {
-    ret = OB_TABLE_NOT_EXIST;
-    LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
-  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
-    LOG_WARN("fail to set compressor none", KR(ret));
-  } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
-    ret = OB_NOT_SUPPORTED;
-    LOG_WARN("not support heap table", KR(ret));
-  } else if (OB_FAIL(init_file_offset(load_args.full_file_path_))) {
-    LOG_WARN("fail to init file offset", KR(ret));
-  }
+  int ret=OB_SUCCESS;
+  return ret;
+}
 
-  for (int i = 0; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
-    is_finish[i] = false;
-    // init csv_parser_
-    if (OB_FAIL(csv_parser_[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(),
-                                      load_args.file_cs_type_))) {
-      LOG_WARN("fail to init csv parser", KR(ret));
-    }
-    // init file_reader_
-    else if (OB_FAIL(file_reader_[i].open_parallel(load_args.full_file_path_, file_offsets_[i], file_offsets_[i + 1]))) {
-      LOG_WARN("fail to open file", KR(ret), K(load_args.full_file_path_));
-    }
-    // init buffer_
-    else if (OB_FAIL(buffer_[i].create(FILE_BUFFER_SIZE))) {
-      LOG_WARN("fail to create buffer", KR(ret));
-    }
-    // init row_caster_
-    else if (OB_FAIL(row_caster_[i].init(table_schema, field_or_var_list))) {
-      LOG_WARN("fail to init row caster", KR(ret));
-    }
-  }
-  datum_row_queue = queue;
-  LOG_INFO("ObReadThreadPool pool init finish", KR(ret));
+void ObCastThreadPool::run(int64_t idx)
+{
+
+}
+
+int ObCastThreadPool::finish()
+{
+  int ret=OB_SUCCESS;
   return ret;
 }
 
