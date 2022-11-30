@@ -265,10 +265,11 @@ class ObReadThreadPool : public share::ObThreadPool
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
+  static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
   int init_file_offset(const ObString &filepath);
-  int init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue);
+  int init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue);
   void run(int64_t idx) final;
   int finish();
 
@@ -276,8 +277,9 @@ public:
   ObLoadCSVPaser csv_parser_[READ_PARALLEL_DEGREE];
   ObLoadSequentialFileReader file_reader_[READ_PARALLEL_DEGREE];
   ObLoadDataBuffer buffer_[READ_PARALLEL_DEGREE];
-  ObLoadRowCaster row_caster_[READ_PARALLEL_DEGREE];
-  ObLoadDatumRowQueue *datum_row_queue;
+  // ObLoadRowCaster row_caster_[READ_PARALLEL_DEGREE];
+  // ObLoadDatumRowQueue *datum_row_queue;
+  ObReadRowQueue *read_row_queue;
   bool is_finish[READ_PARALLEL_DEGREE];
   common::ObArenaAllocator allocator_;
   int64_t pviot_;
@@ -286,14 +288,17 @@ public:
 class ObCastThreadPool : public share::ObThreadPool
 {
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
+  static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
-  int init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue);
+  int init(ObLoadDataStmt &load_stmt, int64_t pviot,ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue);
   void run(int64_t idx) final;
   int finish();
 private:
   ObLoadRowCaster row_caster_[CAST_PARALLEL_DEGREE];
+  bool is_finish[CAST_PARALLEL_DEGREE];
   ObReadRowQueue *read_row_queue_;
   ObLoadDatumRowQueue *datum_row_queue_;
+  int64_t pviot_;
 };
 
 class ObWriteThreadPool : public share::ObThreadPool

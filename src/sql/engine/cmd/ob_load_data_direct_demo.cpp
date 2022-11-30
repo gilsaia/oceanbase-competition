@@ -1091,9 +1091,10 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   int ret = OB_SUCCESS;
   // datum_row_queue_ = static_cast<ObLoadDatumRowQueue *>(allocator_.alloc(sizeof(ObLoadDatumRowQueue)));
   datum_row_queue_.init();
-  if (OB_FAIL(pool_.init(load_stmt, &datum_row_queue_))) {
+  read_row_queue_.init(load_stmt);
+  if (OB_FAIL(pool_.init(load_stmt, &read_row_queue_))) {
     LOG_WARN("fail to pool init", KR(ret));
-  } else if (OB_FAIL(cast_pool_.init(load_stmt,&datum_row_queue_))){
+  } else if (OB_FAIL(cast_pool_.init(load_stmt,pool_.pviot_,&read_row_queue_,&datum_row_queue_))){
     LOG_WARN("fail to cast pool init", KR(ret));
   } else if (OB_FAIL(write_pool_.init(load_stmt, &datum_row_queue_))) {
     LOG_WARN("fail to write pool init", KR(ret));
@@ -1369,30 +1370,13 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
   return ret;
 }
 
-int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue)
+int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *queue)
 {
   int ret = common::OB_SUCCESS;
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
   const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
     load_stmt.get_field_or_var_list();
-  const uint64_t tenant_id = load_args.tenant_id_;
-  const uint64_t table_id = load_args.table_id_;
-  ObSchemaGetterGuard schema_guard;
-  const ObTableSchema *table_schema = nullptr;
-  if (OB_FAIL(ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id,
-                                                                                  schema_guard))) {
-    LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
-  } else if (OB_FAIL(schema_guard.get_table_schema(tenant_id, table_id, table_schema))) {
-    LOG_WARN("fail to get table schema", KR(ret), K(tenant_id), K(table_id));
-  } else if (OB_ISNULL(table_schema)) {
-    ret = OB_TABLE_NOT_EXIST;
-    LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
-  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
-    LOG_WARN("fail to set compressor none", KR(ret));
-  } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
-    ret = OB_NOT_SUPPORTED;
-    LOG_WARN("not support heap table", KR(ret));
-  } else if (OB_FAIL(init_file_offset(load_args.full_file_path_))) {
+  if (OB_FAIL(init_file_offset(load_args.full_file_path_))) {
     LOG_WARN("fail to init file offset", KR(ret));
   }
 
@@ -1411,12 +1395,8 @@ int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue
     else if (OB_FAIL(buffer_[i].create(FILE_BUFFER_SIZE))) {
       LOG_WARN("fail to create buffer", KR(ret));
     }
-    // init row_caster_
-    else if (OB_FAIL(row_caster_[i].init(table_schema, field_or_var_list))) {
-      LOG_WARN("fail to init row caster", KR(ret));
-    }
   }
-  datum_row_queue = queue;
+  read_row_queue = queue;
   LOG_INFO("ObReadThreadPool pool init finish", KR(ret));
   return ret;
 }
@@ -1433,7 +1413,6 @@ void ObReadThreadPool::run(int64_t idx)
   int ret = OB_SUCCESS;
   int cur_row = 0;
   const ObNewRow *new_row = nullptr;
-  const ObLoadDatumRow *datum_row = nullptr;
   while (OB_SUCC(ret)) {
     if (OB_FAIL(buffer_[idx].squash())) {
       LOG_WARN("fail to squash buffer", KR(ret));
@@ -1457,30 +1436,17 @@ void ObReadThreadPool::run(int64_t idx)
           if (OB_UNLIKELY(OB_ITER_END != ret)) {
             LOG_WARN("fail to get next row", KR(ret));
           } else {
+            read_row_queue->push_finish(idx);
             ret = OB_SUCCESS;
             break;
           }
-        } else if (OB_FAIL(row_caster_[idx].get_casted_row(*new_row, datum_row))) {
-          LOG_WARN("fail to cast row", KR(ret));
+        } else if (OB_FAIL(read_row_queue->push(idx,new_row))) {
+          LOG_WARN("fail to push new row",KR(ret));
         }
-        int sort_idx = row_caster_[idx].key_value_ / pviot_;
-        if (sort_idx >= WRITE_PARALLEL_DEGREE) {
-          sort_idx = WRITE_PARALLEL_DEGREE - 1;
-        }
-        if (cur_row % 100000 == 0) {
-          _LOG_INFO("ObReadThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
-        }
-        datum_row_queue->push(sort_idx, datum_row);
-        ++cur_row;
       }
     }
   }
-  _LOG_INFO("ObReadThreadPool thread idx %ld, row num %d push into queue", idx, cur_row);
-  for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
-    datum_row_queue->push_finish(i);
-  }
   is_finish[idx] = true;
-  _LOG_INFO("ObReadThreadPool thread %ld read row num %d finish", idx, cur_row);
 }
 
 int ObReadThreadPool::finish() 
@@ -1498,20 +1464,99 @@ int ObReadThreadPool::finish()
  * ObCastThreadPool
 */
 
-int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue)
+int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, int64_t pviot,ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue)
 {
   int ret=OB_SUCCESS;
+  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
+    load_stmt.get_field_or_var_list();
+  const uint64_t tenant_id = load_args.tenant_id_;
+  const uint64_t table_id = load_args.table_id_;
+  ObSchemaGetterGuard schema_guard;
+  const ObTableSchema *table_schema = nullptr;
+  if (OB_FAIL(ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id,
+                                                                                  schema_guard))) {
+    LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
+  } else if (OB_FAIL(schema_guard.get_table_schema(tenant_id, table_id, table_schema))) {
+    LOG_WARN("fail to get table schema", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_ISNULL(table_schema)) {
+    ret = OB_TABLE_NOT_EXIST;
+    LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
+  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
+    LOG_WARN("fail to set compressor none", KR(ret));
+  } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_WARN("not support heap table", KR(ret));
+  } else {
+    for(int64_t i=0;i<CAST_PARALLEL_DEGREE;++i){
+      is_finish[i]=false;
+      if(OB_FAIL(row_caster_[i].init(table_schema,field_or_var_list))){
+        LOG_WARN("fail to init row caster",KR(ret));
+      }
+    }
+  }
+
+  pviot_=pviot;
+  read_row_queue_=read_queue;
+  datum_row_queue_=load_queue;
+
   return ret;
 }
 
 void ObCastThreadPool::run(int64_t idx)
 {
+  LOG_INFO("ObCastThreadPool thread init start");
+  common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
+  share::ObTenantBase *tenant_base = MTL_CTX();
+  lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
+  lib::Worker::set_compatibility_mode(mode);
+  LOG_INFO("ObCastThreadPool thread init finish");
 
+  int ret=OB_SUCCESS;
+  int cur_row=0;
+  const ObNewRow *new_row = nullptr;
+  const ObLoadDatumRow *datum_row = nullptr;
+  while(OB_SUCC(ret)){
+    if(OB_FAIL(read_row_queue_->pop(idx,new_row))){
+      if(OB_UNLIKELY(OB_ITER_END != ret)){
+        LOG_WARN("fail to get read row",KR(ret));
+      }else{
+        ret=OB_SUCCESS;
+        break;
+      }
+    }else if(OB_FAIL(row_caster_[idx].get_casted_row(*new_row,datum_row))){
+      LOG_WARN("fail to cast row",KR(ret));
+    }else{
+      int sort_idx=row_caster_[idx].key_value_ / pviot_;
+      if(sort_idx>=WRITE_PARALLEL_DEGREE) {
+        sort_idx=WRITE_PARALLEL_DEGREE-1;
+      }
+      if (cur_row % 100000 == 0) {
+        _LOG_INFO("ObCastThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
+      }
+      datum_row_queue_->push(sort_idx, datum_row);
+      if(OB_FAIL(read_row_queue_->free(idx,new_row))){
+        LOG_WARN("fail to free row",KR(ret));
+      }
+      ++cur_row;
+    }
+  }
+  _LOG_INFO("ObCastThreadPool thread idx %ld, row num %d push into queue", idx, cur_row);
+  for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
+    datum_row_queue_->push_finish(i);
+  }
+  is_finish[idx] = true;
+  _LOG_INFO("ObCastThreadPool thread %ld read row num %d finish", idx, cur_row);
 }
 
 int ObCastThreadPool::finish()
 {
   int ret=OB_SUCCESS;
+  for (int i = 0; i < CAST_PARALLEL_DEGREE; ++i) {
+    while (is_finish[i] == false) {
+      PAUSE();
+    }
+  }
   return ret;
 }
 
