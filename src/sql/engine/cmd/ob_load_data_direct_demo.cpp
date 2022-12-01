@@ -1180,8 +1180,8 @@ void ObLoadDatumRowQueue::pop(const int idx, const ObLoadDatumRow *&data, bool &
     }
     if (temp == (void*)(&finish_flag)) {
       is_finish[idx]++;
-      // _LOG_INFO("ObLoadTaskQueue thread idx %d, is_finish %d", idx, is_finish[idx]);
-      if (is_finish[idx] == READ_PARALLEL_DEGREE) {
+      _LOG_INFO("ObLoadTaskQueue thread idx %d, is_finish %d", idx, is_finish[idx]);
+      if (is_finish[idx] == CAST_PARALLEL_DEGREE) {
         finish = true;
         return;
       }
@@ -1249,11 +1249,12 @@ int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
   if(OB_FAIL(OB_FAIL(copy_row(idx,row)))){
     LOG_WARN("copy row failed",KR(ret));
   }else{
-    while(queue_[idx][0].size()>=ObReadRowQueue::QUEUE_CAPACITY){
+    while(OB_FAIL(queue_[idx][0].push((void *)row))){
+      if(ret!=OB_SIZE_OVERFLOW){
+        LOG_WARN("push row failed",KR(ret));
+        break;
+      }
       PAUSE();
-    }
-    if(OB_FAIL(queue_[idx][0].push((void *)row))){
-      LOG_WARN("push row failed",KR(ret));
     }
   }
   return ret;
@@ -1275,15 +1276,18 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
   if(queue_[idx][0].size()==0&&is_finished_[idx]){
+    _LOG_INFO("ObReadRowQueue idx %d finish",idx);
     ret=OB_ITER_END;
   }else{
     void *new_row;
     while(OB_FAIL(queue_[idx][0].pop(new_row))){
       if(ret!=OB_ENTRY_NOT_EXIST){
+        LOG_WARN("pop read row failed",KR(ret));
         break;
       }
       PAUSE();
       if(queue_[idx][0].size()==0&&is_finished_[idx]){
+        _LOG_INFO("ObReadRowQueue idx %d finish",idx);
         ret=OB_ITER_END;
         break;
       }
@@ -1465,6 +1469,11 @@ void ObReadThreadPool::run(int64_t idx)
           }
         } else if (OB_FAIL(read_row_queue->push(idx,new_row))) {
           LOG_WARN("fail to push new row",KR(ret));
+        } else{
+          ++cur_row;
+          if(cur_row % 100000 == 0) {
+            _LOG_INFO("ObReadThreadPool thread idx %ld,row num %d push into queue",idx,cur_row);
+          }
         }
       }
     }
