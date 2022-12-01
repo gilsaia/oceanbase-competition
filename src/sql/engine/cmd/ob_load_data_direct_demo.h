@@ -18,7 +18,7 @@ namespace sql
 {
 #define READ_THREAD_NUM 3
 #define CAST_THREAD_NUM 3
-#define WRITE_THREAD_NUM 6
+#define WRITE_THREAD_NUM 3
 
 class ObLoadDataBuffer
 {
@@ -241,7 +241,7 @@ class ObReadRowQueue
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
   static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
-  static const int64_t QUEUE_CAPACITY=4096;
+  static const int64_t QUEUE_CAPACITY=8192;
 
 public:
   ObReadRowQueue();

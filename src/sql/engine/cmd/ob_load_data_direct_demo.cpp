@@ -1663,6 +1663,9 @@ void ObWriteThreadPool::run(int64_t idx)
     }
     datum_row_queue->free(idx, datum_row);
     ++sort_num;
+    if(sort_num % 100000 == 0){
+      _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
+    }
     // _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   }
   _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
