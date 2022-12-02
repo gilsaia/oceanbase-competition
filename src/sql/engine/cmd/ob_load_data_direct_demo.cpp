@@ -1094,7 +1094,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   read_row_queue_.init();
   if (OB_FAIL(pool_.init(load_stmt, &read_row_queue_))) {
     LOG_WARN("fail to pool init", KR(ret));
-  } else if (OB_FAIL(cast_pool_.init(load_stmt,pool_.pviot_,&read_row_queue_,&datum_row_queue_))){
+  } else if (OB_FAIL(cast_pool_.init(load_stmt,&read_row_queue_,&datum_row_queue_))){
     LOG_WARN("fail to cast pool init", KR(ret));
   } else if (OB_FAIL(write_pool_.init(load_stmt, &datum_row_queue_))) {
     LOG_WARN("fail to write pool init", KR(ret));
@@ -1360,9 +1360,6 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
     file_offsets_[i] += (offset + 1);
   }
   file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
-  int64_t min_key = 10000000;
-  int64_t max_key = 300000000;
-  pviot_ = min_key + (max_key - min_key) / WRITE_PARALLEL_DEGREE + 1;
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
     _LOG_INFO("ObReadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
   }
@@ -1470,7 +1467,7 @@ int ObReadThreadPool::finish()
  * ObCastThreadPool
 */
 
-int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, int64_t pviot,ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue)
+int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue)
 {
   int ret=OB_SUCCESS;
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
@@ -1501,8 +1498,8 @@ int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, int64_t pviot,ObReadRowQue
       }
     }
   }
-
-  pviot_=pviot;
+  int64_t max_key = 300000000;
+  pviot_ = max_key / WRITE_PARALLEL_DEGREE;
   read_row_queue_=read_queue;
   datum_row_queue_=load_queue;
 

@@ -282,7 +282,6 @@ public:
   ObReadRowQueue *read_row_queue;
   bool is_finish[READ_PARALLEL_DEGREE];
   common::ObArenaAllocator allocator_;
-  int64_t pviot_;
 };
 
 class ObCastThreadPool : public share::ObThreadPool
@@ -290,7 +289,7 @@ class ObCastThreadPool : public share::ObThreadPool
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
-  int init(ObLoadDataStmt &load_stmt, int64_t pviot,ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue);
+  int init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue);
   void run(int64_t idx) final;
   int finish();
 private:

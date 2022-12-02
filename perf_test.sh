@@ -13,7 +13,7 @@ else
 fi
 
 # demo file
-demo_file=/root/demo.csv
+demo_file=/root/shuf2.csv
 # sample file
 sample_file=$HOME/sample.csv
 
