@@ -16,9 +16,9 @@ namespace oceanbase
 {
 namespace sql
 {
-#define READ_THREAD_NUM 2
-#define CAST_THREAD_NUM 2
-#define WRITE_THREAD_NUM 2
+#define READ_THREAD_NUM 1
+#define CAST_THREAD_NUM 3
+#define WRITE_THREAD_NUM 3
 
 class ObLoadDataBuffer
 {
@@ -286,6 +286,7 @@ public:
 
 class ObCastThreadPool : public share::ObThreadPool
 {
+  static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:

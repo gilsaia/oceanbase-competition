@@ -1520,7 +1520,7 @@ void ObCastThreadPool::run(int64_t idx)
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
   while(OB_SUCC(ret)){
-    if(OB_FAIL(read_row_queue_->pop(idx,new_row))){
+    if(OB_FAIL(read_row_queue_->pop(idx%READ_PARALLEL_DEGREE,new_row))){
       if(OB_UNLIKELY(OB_ITER_END != ret)){
         LOG_WARN("fail to get read row",KR(ret));
       }else{
@@ -1538,7 +1538,7 @@ void ObCastThreadPool::run(int64_t idx)
         _LOG_INFO("ObCastThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
       }
       datum_row_queue_->push(sort_idx, datum_row);
-      if(OB_FAIL(read_row_queue_->free(idx,new_row))){
+      if(OB_FAIL(read_row_queue_->free(idx%READ_PARALLEL_DEGREE,new_row))){
         LOG_WARN("fail to free row",KR(ret));
       }
       ++cur_row;
