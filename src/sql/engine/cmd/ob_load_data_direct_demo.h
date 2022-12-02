@@ -18,7 +18,7 @@ namespace sql
 {
 #define READ_THREAD_NUM 2
 #define CAST_THREAD_NUM 2
-#define WRITE_THREAD_NUM 3
+#define WRITE_THREAD_NUM 2
 
 class ObLoadDataBuffer
 {
@@ -241,7 +241,7 @@ class ObReadRowQueue
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
   static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
-  static const int64_t QUEUE_CAPACITY=8192;
+  static const int64_t QUEUE_CAPACITY=(1LL<<15);
 
 public:
   ObReadRowQueue();
@@ -251,7 +251,7 @@ public:
   int push_finish(const int idx);
   int pop(const int idx,const common::ObNewRow *&row);
   int free(const int idx,const common::ObNewRow *&row);
-  common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE][2];
+  common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE];
   common::ObConcurrentFIFOAllocator allocators_[CAST_PARALLEL_DEGREE];
 private:
   int copy_row(const int idx,const common::ObNewRow *&row);

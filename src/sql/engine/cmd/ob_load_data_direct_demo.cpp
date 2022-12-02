@@ -1216,10 +1216,8 @@ int ObReadRowQueue::init()
     LOG_WARN("ObReadRowQueue init twice",KR(ret),KP(this));
   }else{
     for(int64_t i=0;i<CAST_PARALLEL_DEGREE;++i){
-      if(OB_FAIL(queue_[i][0].init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))){
+      if(OB_FAIL(queue_[i].init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))){
         LOG_WARN("fail to init datum queue",KR(ret));
-      }else if(OB_FAIL(queue_[i][1].init(QUEUE_CAPACITY,ObModIds::OB_SQL_LOAD_DATA,MTL_ID()))){
-        LOG_WARN("fail to init recycle queue",KR(ret));
       }else if(OB_FAIL(allocators_[i].init(QUEUE_ALLOCATOR_TOTAL_SIZE/CAST_PARALLEL_DEGREE,0,QUEUE_ALLOCATOR_PAGE_SIZE))){
         LOG_WARN("fail to init allocator",KR(ret));
       }else{
@@ -1235,21 +1233,10 @@ int ObReadRowQueue::init()
 int ObReadRowQueue::push(const int idx,const common::ObNewRow *row)
 {
   int ret=OB_SUCCESS;
-  // if(queue_[idx][1].size()){
-  //   int64_t clear_size=min(100,queue_[idx][1].size());
-  //   for(int64_t i=0;i<clear_size;++i){
-  //     void *recycle;
-  //     if(OB_FAIL(queue_[idx][1].pop(recycle))){
-  //       LOG_WARN("pop recycle row failed",KR(ret));
-  //     }else if(OB_FAIL(free_row(idx,recycle))){
-  //       LOG_WARN("free row failed",KR(ret));
-  //     }
-  //   }
-  // }
-  if(OB_FAIL(OB_FAIL(copy_row(idx,row)))){
+  if(OB_FAIL(copy_row(idx,row))){
     LOG_WARN("copy row failed",KR(ret));
   }else{
-    while(OB_FAIL(queue_[idx][0].push((void *)row))){
+    while(OB_FAIL(queue_[idx].push((void *)row))){
       if(ret!=OB_SIZE_OVERFLOW){
         LOG_WARN("push row failed",KR(ret));
         break;
@@ -1275,29 +1262,24 @@ int ObReadRowQueue::push_finish(const int idx)
 int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
-  if(queue_[idx][0].size()==0&&is_finished_[idx]){
+  if(queue_[idx].size()==0&&is_finished_[idx]){
     _LOG_INFO("ObReadRowQueue idx %d finish",idx);
     ret=OB_ITER_END;
   }else{
     void *new_row;
-    while(OB_FAIL(queue_[idx][0].pop(new_row))){
+    while(OB_FAIL(queue_[idx].pop(new_row))){
       if(ret!=OB_ENTRY_NOT_EXIST){
         LOG_WARN("pop read row failed",KR(ret));
         break;
       }
       PAUSE();
-      if(queue_[idx][0].size()==0&&is_finished_[idx]){
+      if(queue_[idx].size()==0&&is_finished_[idx]){
         _LOG_INFO("ObReadRowQueue idx %d finish",idx);
         ret=OB_ITER_END;
         break;
       }
     }
     row=static_cast<const common::ObNewRow *>(new_row);
-    // if(OB_FAIL(queue_[idx][0].pop(new_row))){
-    //   LOG_WARN("pop row fail",KR(ret));
-    // }else{
-    //   row=static_cast<const common::ObNewRow *>(new_row);
-    // }
   }
   return ret;
 }
@@ -1305,15 +1287,6 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
 int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
-  // while(OB_FAIL(queue_[idx][1].push((void *)row))){
-  //   PAUSE();
-  // }
-  // while(queue_[idx][1].size()>=ObReadRowQueue::QUEUE_CAPACITY){
-  //   PAUSE();
-  // }
-  // if(OB_FAIL(queue_[idx][1].push((void *)row))){
-  //   LOG_WARN("push recycle row failed",KR(ret));
-  // }
   free_row(idx,(void *)row);
   return ret;
 }
