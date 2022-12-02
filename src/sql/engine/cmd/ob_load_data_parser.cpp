@@ -26,7 +26,8 @@ namespace sql
 
 int ObCSVGeneralParser::init(const ObDataInFileStruct &format,
                              int64_t file_column_nums,
-                             ObCollationType file_cs_type)
+                             ObCollationType file_cs_type,
+                             int64_t line_size)
 {
   int ret = OB_SUCCESS;
   const char INVALID_TERM_CHAR = '\xff';
@@ -65,7 +66,7 @@ int ObCSVGeneralParser::init(const ObDataInFileStruct &format,
 
   }
 
-  if (OB_SUCC(ret) && OB_FAIL(fields_per_line_.prepare_allocate(file_column_nums))) {
+  if (OB_SUCC(ret) && OB_FAIL(fields_per_line_.prepare_allocate(file_column_nums*line_size))) {
     LOG_WARN("fail to allocate memory", K(ret), K(file_column_nums));
   }
 

@@ -86,7 +86,8 @@ public:
   ObCSVGeneralParser() {}
   int init(const ObDataInFileStruct &format,
            int64_t file_column_nums,
-           common::ObCollationType file_cs_type);
+           common::ObCollationType file_cs_type,
+           int64_t line_size=1);
   const ObCSVGeneralFormat &get_format() { return format_; }
   const OptParams &get_opt_params() { return opt_param_; }
 
@@ -443,7 +444,6 @@ int ObCSVGeneralParser::scan_proto_simple(const char *&str,
   int line_no = 0;
   const char *line_begin = str;
 
-
   while (OB_SUCC(ret) && str < end && line_no < nrows) {
     bool find_new_line = false;
     int field_idx = 0;
@@ -485,7 +485,7 @@ int ObCSVGeneralParser::scan_proto_simple(const char *&str,
 
         if (is_field_term || field_end > field_begin || field_idx < format_.file_column_nums_) {
           if (field_idx++ < format_.file_column_nums_) {
-            gen_new_field(false, false, field_begin, field_end, field_idx);
+            gen_new_field(false, false, field_begin, field_end, field_idx+line_no*format_.file_column_nums_);
           }
         }
 
