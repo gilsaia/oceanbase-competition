@@ -2067,8 +2067,8 @@ class ObMergeItemQueue
 {
 private:
   static const int64_t QUEUE_CAPACITY = (1LL << 10);
-  static const int64_t TOTAL_LIMIT = (1LL << 30);
-  static const int64_t HOLD_LIMIT = (1LL << 30);
+  static const int64_t TOTAL_LIMIT = (1LL << 25);
+  static const int64_t HOLD_LIMIT = (1LL << 25);
   static const int64_t PAGE_SIZE = common::OB_MALLOC_BIG_BLOCK_SIZE;
   int64_t buf_mem_limit_;
   bool is_finish_;
@@ -2101,6 +2101,7 @@ void ObMergeItemQueue<T>::init(int64_t buf_mem_limit)
 {
   queue_.init(QUEUE_CAPACITY);
   allocator_.init(TOTAL_LIMIT, HOLD_LIMIT, PAGE_SIZE);
+  allocator_.set_tenant_id(1);
   buf_mem_limit_ = buf_mem_limit;
   is_finish_ = false;
   LOG_INFO("buf mem limit",K(buf_mem_limit_));
@@ -2130,6 +2131,7 @@ int ObMergeItemQueue<T>::pop(const T *&item)
     }
   }
   item = (const T *)temp;
+  // LOG_INFO("success pop item");
   return common::OB_SUCCESS;
 }
 
@@ -2151,7 +2153,6 @@ int ObMergeItemQueue<T>::push(const T &item)
     STORAGE_LOG(WARN, "invalid item size, must not larger than buf memory limit",
         K(ret), K(item_size), K(buf_mem_limit_));
   } else {
-    LOG_INFO("queue used", K(allocator_.used()));
     while (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(item_size)))) {
       usleep(100);
     }
@@ -2167,10 +2168,10 @@ int ObMergeItemQueue<T>::push(const T &item)
           usleep(100);
         }
       }
-      LOG_INFO("success push item to queue");
+      // LOG_INFO("success push item to queue");
     }
   }
-  LOG_INFO("finish push queue");
+  // LOG_INFO("finish push queue");
   
   return ret;
 }
@@ -2358,9 +2359,14 @@ int ObParallelExternalSortRound<T, Compare>::do_one_run(
         STORAGE_LOG(WARN, "fail to open merger", K(ret));
       }
     }
-    LOG_INFO("do one run log0",K(start_reader_idx));
+    LOG_INFO("do one run log0",K(start_reader_idx), K(ret));
+    int64_t cnt = 0;
     while (OB_SUCC(ret)) {
       share::dag_yield();
+      cnt++;
+      if (cnt % 100000 == 0) {
+        LOG_INFO("loop cnt", K(cnt));
+      }
       if (OB_FAIL(merger_.get_next_item(item))) {
         if (common::OB_ITER_END != ret) {
           STORAGE_LOG(WARN, "fail to get next item", K(ret));
@@ -2380,7 +2386,7 @@ int ObParallelExternalSortRound<T, Compare>::do_one_run(
         STORAGE_LOG(WARN, "fail to build fragment", K(ret));
       }
     }
-    LOG_INFO("do one run log2",K(start_reader_idx));
+    LOG_INFO("do one run log2",K(start_reader_idx), K(ret));
     for (int64_t i = start_reader_idx; i < end_reader_idx; ++i) {
       if (nullptr != iters_[i]) {
         // will do clean up ignore return
@@ -2524,14 +2530,9 @@ int ObParallelExternalSortRound<T, Compare>::build_merger()
   } else if (OB_FAIL(merger_.init(iters_, compare_))) {
     STORAGE_LOG(WARN, "fail to init FragmentMerger", K(ret));
   } 
-  // else if (!merger_.is_opened() && OB_FAIL(merger_.open())) {
-    // STORAGE_LOG(WARN, "fail to open merger", K(ret));
-  // }
-  // merge_buffer_.init(MERGE_BUF_LIMIT, &merger_);
-  // merge_buffer_pool_.init(&merger_, &merge_buffer_);
-  // merge_buffer_pool_.set_thread_count(1);
-  // merge_buffer_pool_.set_run_wrapper(MTL_CTX());
-  // merge_buffer_pool_.start();
+  else if (!merger_.is_opened() && OB_FAIL(merger_.open())) {
+    STORAGE_LOG(WARN, "fail to open merger", K(ret));
+  }
   return ret;
 }
 
@@ -2545,31 +2546,34 @@ int ObParallelExternalSortRound<T, Compare>::get_next_item(const T *&item)
   }
    else if (!merger_.is_opened() && OB_FAIL(merger_.open())) {
     STORAGE_LOG(WARN, "fail to open merger", K(ret));
-  } else if (!is_thread_start_) {
-    queue_.init(QUEUE_MEM_LIMIT);
-    merge_buffer_pool_.init(&merger_, &queue_);
-    merge_buffer_pool_.set_thread_count(1);
-    merge_buffer_pool_.set_run_wrapper(MTL_CTX());
-    merge_buffer_pool_.start(); 
-    is_thread_start_ = true;
-  }
-
-  if (OB_SUCC(ret)) {
-    // if (OB_FAIL(merger_.get_next_item(item))) {
-    //   if (common::OB_ITER_END != ret) {
-    //     STORAGE_LOG(WARN, "fail to get next item", K(ret));
-    //   }
-    // }
-    if (pre_item_) {
-      queue_.free(pre_item_);
-    }
-    if (OB_FAIL(queue_.pop(item))) {
+  } else {
+    if (OB_FAIL(merger_.get_next_item(item))) {
       if (common::OB_ITER_END != ret) {
         STORAGE_LOG(WARN, "fail to get next item", K(ret));
       }
     }
-    pre_item_ = item;
   }
+  // else if (!is_thread_start_) {
+  //   merger_.open();
+  //   queue_.init(QUEUE_MEM_LIMIT);
+  //   merge_buffer_pool_.init(&merger_, &queue_);
+  //   merge_buffer_pool_.set_thread_count(1);
+  //   merge_buffer_pool_.set_run_wrapper(MTL_CTX());
+  //   merge_buffer_pool_.start(); 
+  //   is_thread_start_ = true;
+  // }
+
+  // if (OB_SUCC(ret)) {
+  //   if (pre_item_) {
+  //     queue_.free(pre_item_);
+  //   }
+  //   if (OB_FAIL(queue_.pop(item))) {
+  //     if (common::OB_ITER_END != ret) {
+  //       STORAGE_LOG(WARN, "fail to get next item", K(ret));
+  //     }
+  //   }
+  //   pre_item_ = item;
+  // }
   return ret;
 }
 
@@ -2656,8 +2660,11 @@ int ObParallelExternalSortRound<T, Compare>::clean_up()
     STORAGE_LOG(WARN, "fail to do writer finish", K(tmp_ret));
     ret = (common::OB_SUCCESS == ret) ? tmp_ret : ret;
   }
-  merge_buffer_pool_.stop();
-  merge_buffer_pool_.wait();
+  if (is_thread_start_) {
+    merge_buffer_pool_.stop();
+    merge_buffer_pool_.wait();
+    is_thread_start_ = false;
+  }
   is_inited_ = false;
   file_buf_size_ = 0;
   iters_.reset();
@@ -2828,6 +2835,7 @@ ObParallelMemorySortRound<T, Compare>::ObParallelMemorySortRound()
   
   for (int i = 0; i < CONCURRENT_NUM; ++i) {
     allocators_[i] = new common::ObArenaAllocator("PMS", common::OB_MALLOC_BIG_BLOCK_SIZE);
+    allocators_[i]->set_tenant_id(1);
     item_lists_[i] = new common::ObVector<T *>(NULL, common::ObNewModIds::OB_ASYNC_EXTERNAL_SORTER);
   }
 }
@@ -3104,30 +3112,30 @@ int ObParallelExternalSort<T, Compare>::do_sort(bool flag)
     int64_t round_id = 1;
     is_empty_ = false;
     while (OB_SUCC(ret) && curr_round_->get_fragment_count() > final_round_limit) {
-      LOG_INFO("sort round", K(round_id));
+      LOG_INFO("sort round", K(round_id)); // 8
       const int64_t start_time = common::ObTimeUtility::current_time();
-      STORAGE_LOG(INFO, "do sort start round", K(round_id));
+      STORAGE_LOG(INFO, "do sort start round", K(round_id)); // 8
       if (OB_FAIL(next_round_->init(merge_count_per_round_, file_buf_size_,
           expire_timestamp_, tenant_id_, compare_))) {
         STORAGE_LOG(WARN, "fail to init next sort round", K(ret));
-      } else if (OB_FAIL(curr_round_->do_merge(*next_round_))) {
+      } else if (OB_FAIL(curr_round_->do_merge(*next_round_))) { // 8
         STORAGE_LOG(WARN, "fail to do merge fragments of current round", K(ret));
       } else if (OB_FAIL(curr_round_->clean_up())) {
         STORAGE_LOG(WARN, "fail to do clean up of current round", K(ret));
       } else {
         std::swap(curr_round_, next_round_);
         const int64_t round_cost_time = common::ObTimeUtility::current_time() - start_time;
-        STORAGE_LOG(INFO, "do sort end round", K(round_id), K(round_cost_time));
+        STORAGE_LOG(INFO, "do sort end round", K(round_id), K(round_cost_time)); // 6
         ++round_id;
       }
     }
-    LOG_INFO("do sort round finish");
+    LOG_INFO("do sort round finish"); // 6
     if (OB_SUCC(ret)) {
       if (OB_FAIL(curr_round_->build_merger())) {
         STORAGE_LOG(WARN, "fail to build merger", K(ret));
       }
     }
-    LOG_INFO("do sort build merger finish");
+    LOG_INFO("do sort build merger finish"); // 6
   }
   return ret;
 }

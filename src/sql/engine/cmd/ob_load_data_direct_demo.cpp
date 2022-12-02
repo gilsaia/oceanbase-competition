@@ -652,7 +652,7 @@ int ObLoadExternalSort::append_row_parallel(const ObLoadDatumRow &datum_row,cons
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
-  } else if (OB_UNLIKELY(is_closed_[0])) {
+  } else if (OB_UNLIKELY(is_closed_[index])) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected closed external sort", KR(ret));
   } else {
@@ -1089,6 +1089,10 @@ int ObLoadDataDirectDemo::do_load()
   write_pool_.start();
   pool_.finish();
   write_pool_.finish();
+  pool_.stop();
+  pool_.wait();
+  write_pool_.stop();
+  write_pool_.wait();
   return ret;
 }
 
@@ -1102,6 +1106,7 @@ void ObLoadDatumRowQueue::init()
     queue_[i].init(QUEUE_MAX_SIZE);
     allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
                       MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
+    allocators_[i].set_tenant_id(1);
     is_ready[i] = false;
     is_finish[i] = 0;
   }
@@ -1215,7 +1220,7 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
     file_offsets_[i] += (offset + 1);
   }
   file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
-  int64_t max_key = 100000000;
+  int64_t max_key = 300000000;
   pviot_ = max_key / WRITE_PARALLEL_DEGREE;
   _LOG_INFO("ObReadThreadPool pviot %ld", pviot_);
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
@@ -1243,8 +1248,8 @@ int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue
   } else if (OB_ISNULL(table_schema)) {
     ret = OB_TABLE_NOT_EXIST;
     LOG_WARN("table not exist", KR(ret), K(tenant_id), K(table_id));
-  } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
-    LOG_WARN("fail to set compressor none", KR(ret));
+  // } else if (OB_FAIL(const_cast<ObTableSchema *>(table_schema)->set_compress_func_name(""))){
+  //   LOG_WARN("fail to set compressor none", KR(ret));
   } else if (OB_UNLIKELY(table_schema->is_heap_table())) {
     ret = OB_NOT_SUPPORTED;
     LOG_WARN("not support heap table", KR(ret));

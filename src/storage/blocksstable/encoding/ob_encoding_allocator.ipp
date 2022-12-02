@@ -141,7 +141,7 @@ inline void ObEncodingAllocator<EncodingItem>::free(EncodingItem *item)
 {
   if (NULL != item) {
     // performance critical, don't check params
-    pools_[item->get_type()]->free(item);
+    // pools_[item->get_type()]->free(item);
     item = NULL;
   }
 }
