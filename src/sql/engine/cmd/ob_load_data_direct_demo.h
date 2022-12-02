@@ -18,7 +18,7 @@ namespace sql
 {
 #define READ_THREAD_NUM 1
 #define CAST_THREAD_NUM 3
-#define WRITE_THREAD_NUM 3
+#define WRITE_THREAD_NUM 4
 
 class ObLoadDataBuffer
 {
