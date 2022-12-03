@@ -1218,6 +1218,31 @@ int ObExternalSortRound<T, Compare>::do_merge(
 }
 
 template<typename T, typename Compare>
+int ObExternalSortRound<T, Compare>::do_merge_parallel(
+    ObExternalSortRound &next_round)
+{
+  int ret = common::OB_SUCCESS;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = common::OB_NOT_INIT;
+    STORAGE_LOG(WARN, "ObExternalSortRound has not been inited", K(ret));
+  } else {
+    int64_t reader_idx = 0;
+    STORAGE_LOG(INFO, "external sort do merge parallel start");
+    while (OB_SUCC(ret) && reader_idx < iters_.count()) {
+      const int64_t end_reader_idx = std::min(start_reader_idx + merge_count_, iters_.count());
+      int64_t list_idx = 0;
+      FragmentIteratorList iters;
+      for (int64_t i = start_reader_idx; OB_SUCC(ret) && i < end_reader_idx; ++i) {
+        if (OB_FAIL(iters.push_back(iters_.at(i)))) {
+          STORAGE_LOG(WARN, "fail to push back iterator list", K(ret));
+        }
+      }
+
+    }
+  }
+} 
+
+template<typename T, typename Compare>
 int ObExternalSortRound<T, Compare>::do_one_run(
     const int64_t start_reader_idx, ObExternalSortRound &next_round)
 {
