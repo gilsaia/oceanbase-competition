@@ -308,6 +308,11 @@ int64_t ObLoadDatumRow::get_deep_copy_size() const
   return size;
 }
 
+int64_t ObLoadDatumRow::get_shallow_copy_size() const
+{
+  return sizeof(ObStorageDatum)*count_;
+}
+
 int ObLoadDatumRow::deep_copy(const ObLoadDatumRow &src, char *buf, int64_t len, int64_t &pos)
 {
   int ret = OB_SUCCESS;
@@ -329,6 +334,35 @@ int ObLoadDatumRow::deep_copy(const ObLoadDatumRow &src, char *buf, int64_t len,
       capacity_ = datum_cnt;
       count_ = datum_cnt;
       datums_ = datums;
+    }
+  }
+  return ret;
+}
+
+int ObLoadDatumRow::shallow_copy(const ObLoadDatumRow &src, char *buf, int64_t len, int64_t &pos)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!src.is_valid())) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid args", KR(ret), K(src));
+  } else {
+    reset();
+    ObStorageDatum *datums = nullptr;
+    const int64_t datum_cnt = src.count_;
+    datums = new (buf + pos) ObStorageDatum[datum_cnt];
+    pos += sizeof(ObStorageDatum) * datum_cnt;
+    for (int64_t i = 0; OB_SUCC(ret) && i < datum_cnt; ++i) {
+      datums[i]=src.datums_[i];
+      // if (OB_FAIL(datums[i].deep_copy(src.datums_[i], buf, len, pos))) {
+      //   LOG_WARN("fail to deep copy storage datum", KR(ret), K(src.datums_[i]));
+      // }
+    }
+    if (OB_SUCC(ret)) {
+      capacity_ = datum_cnt;
+      count_ = datum_cnt;
+      datums_ = datums;
+      new_row_ = src.new_row_;
+      recycle_idx_ = src.recycle_idx_;
     }
   }
   return ret;
@@ -531,7 +565,7 @@ int ObLoadRowCaster::init_column_schemas_and_idxs(
   return ret;
 }
 
-int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRow *&datum_row)
+int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRow *&datum_row,int64_t recycle_idx)
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
@@ -557,6 +591,8 @@ int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRo
         }
       }
     }
+    datum_row_.new_row_=const_cast<ObNewRow *>(&new_row);
+    datum_row_.recycle_idx_=recycle_idx;
     if (OB_SUCC(ret)) {
       datum_row = &datum_row_;
     }
@@ -1096,7 +1132,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
     LOG_WARN("fail to pool init", KR(ret));
   } else if (OB_FAIL(cast_pool_.init(load_stmt,&read_row_queue_,&datum_row_queue_))){
     LOG_WARN("fail to cast pool init", KR(ret));
-  } else if (OB_FAIL(write_pool_.init(load_stmt, &datum_row_queue_))) {
+  } else if (OB_FAIL(write_pool_.init(load_stmt, &read_row_queue_,&datum_row_queue_))) {
     LOG_WARN("fail to write pool init", KR(ret));
   }
   pool_.set_thread_count(PARALLEL_DEGREE);
@@ -1138,7 +1174,7 @@ void ObLoadDatumRowQueue::init()
 void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
 {
   int ret = OB_SUCCESS;
-  const int64_t item_size = sizeof(ObLoadDatumRow) + data->get_deep_copy_size();
+  const int64_t item_size = sizeof(ObLoadDatumRow) + data->get_shallow_copy_size();
   char *buf = NULL;
   ObLoadDatumRow *new_data = NULL;
   
@@ -1149,14 +1185,22 @@ void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
     LOG_WARN("new item is null", K(ret));
   } else {
     int64_t buf_pos = sizeof(ObLoadDatumRow);
-    if (OB_FAIL(new_data->deep_copy(*data, buf, item_size, buf_pos))) {
+    if (OB_FAIL(new_data->shallow_copy(*data, buf, item_size, buf_pos))) {
       LOG_WARN("deep copy fail", K(ret));
-    } else {
-      while (OB_SUCCESS != queue_[idx].push((void *)new_data)) {
-        PAUSE();
-      }
-      // _LOG_INFO(" ObLoadDatumRowQueue thread idx %d, push finish", idx);
     }
+    // } else {
+    //   while (OB_SUCCESS != queue_[idx].push((void *)new_data)) {
+    //     PAUSE();
+    //   }
+    //   // _LOG_INFO(" ObLoadDatumRowQueue thread idx %d, push finish", idx);
+    // }
+  }
+  while(OB_FAIL(queue_[idx].push((void *)new_data))){
+    if(ret!=OB_SIZE_OVERFLOW){
+      LOG_WARN("push row failed",KR(ret));
+      break;
+    }
+    PAUSE();
   }
   if (is_ready[idx] == false) {
     is_ready[idx] = true;
@@ -1284,7 +1328,7 @@ int ObReadRowQueue::pop(const int idx,const common::ObNewRow *&row)
   return ret;
 }
 
-int ObReadRowQueue::free(const int idx,const common::ObNewRow *&row)
+int ObReadRowQueue::free(const int idx,const common::ObNewRow *row)
 {
   int ret=OB_SUCCESS;
   free_row(idx,(void *)row);
@@ -1527,7 +1571,7 @@ void ObCastThreadPool::run(int64_t idx)
         ret=OB_SUCCESS;
         break;
       }
-    }else if(OB_FAIL(row_caster_[idx].get_casted_row(*new_row,datum_row))){
+    }else if(OB_FAIL(row_caster_[idx].get_casted_row(*new_row,datum_row,idx%READ_PARALLEL_DEGREE))){
       LOG_WARN("fail to cast row",KR(ret));
     }else{
       int sort_idx=row_caster_[idx].key_value_ / pviot_;
@@ -1538,9 +1582,9 @@ void ObCastThreadPool::run(int64_t idx)
         _LOG_INFO("ObCastThreadPool thread idx %ld, row num %d push into queue[%d]", idx, cur_row, sort_idx);
       }
       datum_row_queue_->push(sort_idx, datum_row);
-      if(OB_FAIL(read_row_queue_->free(idx%READ_PARALLEL_DEGREE,new_row))){
-        LOG_WARN("fail to free row",KR(ret));
-      }
+      // if(OB_FAIL(read_row_queue_->free(idx%READ_PARALLEL_DEGREE,new_row))){
+      //   LOG_WARN("fail to free row",KR(ret));
+      // }
       ++cur_row;
     }
   }
@@ -1568,7 +1612,7 @@ int ObCastThreadPool::finish()
  * ObWriteThreadPool
  */
 
-int ObWriteThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue)
+int ObWriteThreadPool::init(ObLoadDataStmt &load_stmt,ObReadRowQueue *read_queue, ObLoadDatumRowQueue *queue)
 {
   int ret = OB_SUCCESS;
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
@@ -1603,6 +1647,7 @@ int ObWriteThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queu
     LOG_WARN("fail to init sstable writer", KR(ret));
   }
   datum_row_queue = queue;
+  read_row_queue_=read_queue;
   LOG_INFO("ObWriteThreadPool pool init finish", KR(ret));
   return ret;
 }
@@ -1630,6 +1675,9 @@ void ObWriteThreadPool::run(int64_t idx)
     }
     if (OB_FAIL(external_sort_.append_row_parallel(*datum_row, idx))) {
       LOG_WARN("fail to append row", KR(ret));
+    }
+    if(OB_FAIL(read_row_queue_->free(datum_row->recycle_idx_,(const common::ObNewRow *)datum_row->new_row_))){
+      LOG_WARN("fail to free row",KR(ret));
     }
     datum_row_queue->free(idx, datum_row);
     ++sort_num;

@@ -100,7 +100,9 @@ public:
   void reset();
   int init(int64_t capacity);
   int64_t get_deep_copy_size() const;
+  int64_t get_shallow_copy_size() const;
   int deep_copy(const ObLoadDatumRow &src, char *buf, int64_t len, int64_t &pos);
+  int shallow_copy(const ObLoadDatumRow &src, char *buf, int64_t len, int64_t &pos);
   OB_INLINE bool is_valid() const { return count_ > 0 && nullptr != datums_; }
   DECLARE_TO_STRING;
 public:
@@ -108,6 +110,8 @@ public:
   int64_t capacity_;
   int64_t count_;
   blocksstable::ObStorageDatum *datums_;
+  ObNewRow *new_row_;
+  int64_t recycle_idx_;
 };
 
 class ObLoadDatumRowCompare
@@ -135,7 +139,7 @@ public:
   ~ObLoadRowCaster();
   int init(const share::schema::ObTableSchema *table_schema,
            const common::ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list);
-  int get_casted_row(const common::ObNewRow &new_row, const ObLoadDatumRow *&datum_row);
+  int get_casted_row(const common::ObNewRow &new_row, const ObLoadDatumRow *&datum_row,int64_t recycle_idx);
 private:
   int init_column_schemas_and_idxs(
     const share::schema::ObTableSchema *table_schema,
@@ -239,7 +243,7 @@ public:
 class ObReadRowQueue
 {
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
-  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
+  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 30); // 1G
   static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
   static const int64_t QUEUE_CAPACITY=(1LL<<15);
 
@@ -250,7 +254,7 @@ public:
   int push(const int idx,const common::ObNewRow *row);
   int push_finish(const int idx);
   int pop(const int idx,const common::ObNewRow *&row);
-  int free(const int idx,const common::ObNewRow *&row);
+  int free(const int idx,const common::ObNewRow *row);
   common::ObLightyQueue queue_[CAST_PARALLEL_DEGREE];
   common::ObConcurrentFIFOAllocator allocators_[CAST_PARALLEL_DEGREE];
 private:
@@ -307,13 +311,14 @@ class ObWriteThreadPool : public share::ObThreadPool
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
-  int init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue);
+  int init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue, ObLoadDatumRowQueue *queue);
   void run(int64_t idx) final;
   int finish();
 
   bool is_sort[WRITE_PARALLEL_DEGREE];
   ObLoadExternalSort external_sort_;
   ObLoadSSTableWriter sstable_writer_;
+  ObReadRowQueue *read_row_queue_;
   ObLoadDatumRowQueue *datum_row_queue;
 };
 
