@@ -1104,6 +1104,7 @@ void ObLoadDatumRowQueue::init()
                       MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
     is_ready[i] = false;
     is_finish[i] = 0;
+    allocators_[i].set_tenant_id(MTL_ID());
   }
 }
 
@@ -1175,6 +1176,46 @@ void ObLoadDatumRowQueue::free(const int idx, const ObLoadDatumRow *data)
  * ObReadThreadPool
  */
 
+int ObReadThreadPool::random_sampling(const int fd, const int64_t file_size, char *buf) 
+{
+  int ret = OB_SUCCESS;
+  int64_t pos = 0;
+  int64_t read_size = 256;
+  int64_t offset = file_size / SAMPLING_NUM;
+  for (int i = 0; OB_SUCC(ret) && i < SAMPLING_NUM; ++i) {
+    if (i != 0) {
+      pos += offset;
+    }
+    lseek(fd, pos, SEEK_SET);
+    if (read_size != read(fd, buf, read_size)){
+      ret = OB_ERR_UNEXPECTED; 
+    }
+    int temp_pos = 0;
+    while (temp_pos < read_size && buf[temp_pos] != '\n') {
+      ++temp_pos;
+    }
+    ++temp_pos;
+    int flag = 0;
+    int64_t key = 0;
+    while (temp_pos < read_size) {
+      if (buf[temp_pos] >= '0' && buf[temp_pos] <= '9') {
+        key = key * 10 + buf[temp_pos] - '0';
+      }
+      if (buf[temp_pos] == '|') {
+        flag = 1;
+        break;
+      }
+      ++temp_pos;
+    }
+    if (!flag) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("no find, read size is small", K(read_size));
+    }
+    max_key_ = max(max_key_, key);
+  }
+  return ret;
+}
+
 int ObReadThreadPool::init_file_offset(const ObString &filepath)
 {
   int ret = OB_SUCCESS;
@@ -1196,6 +1237,9 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
   }
   // calc offset
   size = common::get_file_size(fd);
+  max_key_ = 0;
+  random_sampling(fd, size, buf);
+  _LOG_INFO("ObReadThreadPool max key %ld", max_key_);
   int64_t temp = size / READ_PARALLEL_DEGREE;
   file_offsets_[0] = 0;
   for (int i = 1; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
@@ -1215,9 +1259,8 @@ int ObReadThreadPool::init_file_offset(const ObString &filepath)
     file_offsets_[i] += (offset + 1);
   }
   file_offsets_[READ_PARALLEL_DEGREE] = -1; // end
-  int64_t min_key = 10000000;
-  int64_t max_key = 300000000;
-  pviot_ = min_key + (max_key - min_key) / WRITE_PARALLEL_DEGREE + 1;
+  pviot_ = max_key_ / WRITE_PARALLEL_DEGREE;
+
   for (int i = 0; i <= READ_PARALLEL_DEGREE; ++i) {
     _LOG_INFO("ObReadThreadPool file offset idx %d: %ld", i, file_offsets_[i]);
   }
@@ -1235,6 +1278,7 @@ int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queue
   const uint64_t table_id = load_args.table_id_;
   ObSchemaGetterGuard schema_guard;
   const ObTableSchema *table_schema = nullptr;
+  allocator_.set_tenant_id(MTL_ID());
   if (OB_FAIL(ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id,
                                                                                   schema_guard))) {
     LOG_WARN("fail to get tenant schema guard", KR(ret), K(tenant_id));
