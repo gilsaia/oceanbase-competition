@@ -237,7 +237,7 @@ class ObReadThreadPool : public share::ObThreadPool
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
-  static const int64_t SAMPLING_NUM = 1000;
+  static const int64_t SAMPLING_NUM = 10000;
 public:
   int random_sampling(const int fd, const int64_t file_size, char *buf);
   int init_file_offset(const ObString &filepath);
