@@ -354,10 +354,10 @@ int ObLoadDatumRow::shallow_copy(const ObLoadDatumRow &src, char *buf, int64_t l
     datums = new (buf + pos) ObStorageDatum[datum_cnt];
     pos += sizeof(ObStorageDatum) * datum_cnt;
     for (int64_t i = 0; OB_SUCC(ret) && i < datum_cnt; ++i) {
-      datums[i]=src.datums_[i];
-      // if (OB_FAIL(datums[i].deep_copy(src.datums_[i], buf, len, pos))) {
-      //   LOG_WARN("fail to deep copy storage datum", KR(ret), K(src.datums_[i]));
-      // }
+      // datums[i]=src.datums_[i];
+      if (OB_FAIL(datums[i].deep_copy(src.datums_[i], buf, len, pos))) {
+        LOG_WARN("fail to deep copy storage datum", KR(ret), K(src.datums_[i]));
+      }
     }
     if (OB_SUCC(ret)) {
       capacity_ = datum_cnt;
