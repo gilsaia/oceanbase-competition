@@ -86,12 +86,20 @@ public:
   ObCSVGeneralParser() {}
   int init(const ObDataInFileStruct &format,
            int64_t file_column_nums,
-           common::ObCollationType file_cs_type);
+           common::ObCollationType file_cs_type,
+           int64_t line_size=1);
   const ObCSVGeneralFormat &get_format() { return format_; }
   const OptParams &get_opt_params() { return opt_param_; }
 
   template<common::ObCharsetType cs_type, typename handle_func, bool DO_ESCAPE = false>
   int scan_proto(const char *&str, const char *end, int64_t &nrows,
+                 char *escape_buf, char *escaped_buf_end,
+                 handle_func &handle_one_line,
+                 common::ObIArray<LineErrRec> &errors,
+                 bool is_end_file);
+
+  template<common::ObCharsetType cs_type, typename handle_func, bool DO_ESCAPE = false>
+  int scan_proto_simple(const char *&str, const char *end, int64_t &nrows,
                  char *escape_buf, char *escaped_buf_end,
                  handle_func &handle_one_line,
                  common::ObIArray<LineErrRec> &errors,
@@ -124,6 +132,35 @@ public:
     }
     return ret;
   }
+
+  template<typename handle_func, bool DO_ESCAPE = false>
+  int scan_simple(const char *&str, const char *end, int64_t &nrows,
+           char *escape_buf, char *escaped_buf_end,
+           handle_func &handle_one_line,
+           common::ObIArray<LineErrRec> &errors,
+           bool is_end_file = false) {
+    int ret = common::OB_SUCCESS;
+    switch (format_.cs_type_) {
+    case common::CHARSET_UTF8MB4:
+      ret = scan_proto_simple<common::CHARSET_UTF8MB4, handle_func, DO_ESCAPE>(
+            str, end, nrows, escape_buf, escaped_buf_end, handle_one_line, errors, is_end_file);
+      break;
+    case common::CHARSET_GBK:
+      ret = scan_proto_simple<common::CHARSET_GBK, handle_func, DO_ESCAPE>(
+            str, end, nrows, escape_buf, escaped_buf_end, handle_one_line, errors, is_end_file);
+      break;
+    case common::CHARSET_GB18030:
+      ret = scan_proto_simple<common::CHARSET_GB18030, handle_func, DO_ESCAPE>(
+            str, end, nrows, escape_buf, escaped_buf_end, handle_one_line, errors, is_end_file);
+      break;
+    default:
+      ret = scan_proto_simple<common::CHARSET_BINARY, handle_func, DO_ESCAPE>(
+            str, end, nrows, escape_buf, escaped_buf_end, handle_one_line, errors, is_end_file);
+      break;
+    }
+    return ret;
+  }
+
   common::ObIArray<FieldValue>& get_fields_per_line() { return fields_per_line_; }
 
 private:
@@ -365,6 +402,90 @@ int ObCSVGeneralParser::scan_proto(const char *&str,
         if (is_field_term || field_end > field_begin || field_idx < format_.file_column_nums_) {
           if (field_idx++ < format_.file_column_nums_) {
             gen_new_field(is_enclosed, last_escaped_str != nullptr, field_begin, field_end, field_idx);
+          }
+        }
+
+        if (is_line_term
+            && (!opt_param_.is_line_term_by_counting_field_ || field_idx == format_.file_column_nums_)) {
+          find_new_line = true;
+        }
+      }
+    }
+    if (OB_LIKELY(find_new_line) || is_end_file) {
+      if (field_idx != format_.file_column_nums_) {
+        ret = handle_irregular_line(field_idx, line_no, errors);
+      }
+      if (OB_SUCC(ret)) {
+        ret = handle_one_line(fields_per_line_);
+      }
+      line_no++;
+      line_begin = str;
+    }
+  }
+
+  str = line_begin;
+  nrows = line_no;
+
+  return ret;
+}
+
+template<common::ObCharsetType cs_type, typename handle_func, bool DO_ESCAPE>
+int ObCSVGeneralParser::scan_proto_simple(const char *&str,
+                                   const char *end,
+                                   int64_t &nrows,
+                                   char *escape_buf,
+                                   char *escape_buf_end,
+                                   handle_func &handle_one_line,
+                                   common::ObIArray<LineErrRec> &errors,
+                                   bool is_end_file)
+{
+  int ret = common::OB_SUCCESS;
+
+  int line_no = 0;
+  const char *line_begin = str;
+
+  while (OB_SUCC(ret) && str < end && line_no < nrows) {
+    bool find_new_line = false;
+    int field_idx = 0;
+
+    while (str < end && !find_new_line) {
+      const char *field_begin = str;
+      bool is_term = false;
+      bool is_field_term = false;
+      bool is_line_term = false;
+
+      while (str < end && !is_term) {
+        const char *next = str + 1;
+        if (next < end && format_.field_escaped_char_ == *str) {
+          bool is_valid_escape = (1 == mbcharlen<cs_type>(next, end));
+          str += (OB_LIKELY(is_valid_escape) ? 2 : 1);  
+        } else {
+          is_field_term = *str == opt_param_.field_term_c_;
+
+          is_line_term = *str == opt_param_.line_term_c_;
+          
+          is_term = (is_field_term || is_line_term);
+
+          if (!is_term) {
+            ++str;
+            // int mb_len = mbcharlen<cs_type>(str, end);
+            // str += mb_len;
+          }
+        }
+      }
+
+      if (OB_LIKELY(is_term) || is_end_file) {
+        const char *field_end = str;
+        if (OB_LIKELY(is_term)) {
+          ++str;
+          // str += is_field_term ? format_.field_term_str_.length() : format_.line_term_str_.length();
+        } else {
+          str = end;
+        }
+
+        if (is_field_term || field_end > field_begin || field_idx < format_.file_column_nums_) {
+          if (field_idx++ < format_.file_column_nums_) {
+            gen_new_field(false, false, field_begin, field_end, field_idx+line_no*format_.file_column_nums_);
           }
         }
 
