@@ -1681,6 +1681,7 @@ void ObWriteThreadPool::run(int64_t idx)
   //   }
   // }
   // _LOG_INFO("ObWriteThreadPool thread %ld close sstable writer", idx);
+
 }
 
 int ObWriteThreadPool::finish()
@@ -1691,6 +1692,7 @@ int ObWriteThreadPool::finish()
     }
   }
   sstable_writer_.close();
+
   int ret = OB_SUCCESS;
   while (!sstable_writer_.is_close()) {
     PAUSE();

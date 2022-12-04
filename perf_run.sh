@@ -10,7 +10,7 @@ then
     exit -1
 fi
 echo "1: perf record"
-perf record -F 99 -g -p $PID -- sleep 60
+perf record -F 99 -g -p $PID -- sleep 360
 echo "2: perf script"
 perf script -i perf.data &> perf.unfold
 echo "3: stackcollapse-perf.pl"
