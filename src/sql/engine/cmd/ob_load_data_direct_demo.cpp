@@ -334,6 +334,8 @@ int ObLoadDatumRow::deep_copy(const ObLoadDatumRow &src, char *buf, int64_t len,
       capacity_ = datum_cnt;
       count_ = datum_cnt;
       datums_ = datums;
+      new_row_=src.new_row_;
+      recycle_idx_=src.recycle_idx_;
     }
   }
   return ret;
@@ -1174,7 +1176,7 @@ void ObLoadDatumRowQueue::init()
 void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
 {
   int ret = OB_SUCCESS;
-  const int64_t item_size = sizeof(ObLoadDatumRow) + data->get_shallow_copy_size();
+  const int64_t item_size = sizeof(ObLoadDatumRow) + data->get_deep_copy_size();
   char *buf = NULL;
   ObLoadDatumRow *new_data = NULL;
   
@@ -1186,7 +1188,7 @@ void ObLoadDatumRowQueue::push(const int idx, const ObLoadDatumRow *data)
   } else {
     int64_t buf_pos = sizeof(ObLoadDatumRow);
     if (OB_FAIL(new_data->shallow_copy(*data, buf, item_size, buf_pos))) {
-      LOG_WARN("deep copy fail", K(ret));
+      LOG_WARN("shallow copy fail", K(ret));
     }
     // } else {
     //   while (OB_SUCCESS != queue_[idx].push((void *)new_data)) {
