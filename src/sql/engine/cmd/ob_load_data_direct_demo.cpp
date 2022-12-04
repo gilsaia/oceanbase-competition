@@ -1129,7 +1129,7 @@ void ObLoadDatumRowQueue::init()
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
     queue_[i].init(1 << 18);
     allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
-                      MY_PAGE_SIZE / WRITE_PARALLEL_DEGREE);
+                      MY_PAGE_SIZE);
     is_ready[i] = false;
     is_finish[i] = 0;
   }
