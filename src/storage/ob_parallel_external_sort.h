@@ -317,7 +317,7 @@ int ObFragmentWriterV2<T>::flush_buffer()
     io_info.buf_ = buf_;
     io_info.io_desc_.set_category(common::ObIOCategory::SYS_IO);
     io_info.io_desc_.set_wait_event(ObWaitEventIds::DB_FILE_INDEX_BUILD_WRITE);
-    STORAGE_LOG(WARN, "io info", K(io_info));
+    // STORAGE_LOG(WARN, "io info", K(io_info));
     if (OB_FAIL(FILE_MANAGER_INSTANCE_V2.aio_write(io_info, file_io_handle_))) {
       STORAGE_LOG(WARN, "fail to do aio write macro file", K(ret), K(io_info));
     } else {
@@ -2414,48 +2414,48 @@ int ObMergeItemQueue<T>::push(const T &item)
   return ret;
 }
 
-template<typename T, typename Compare>
-class ObMergeBufferPool : public share::ObThreadPool
-{
-  typedef ObMergeItemQueue<T> MergeItemQueue;
-  typedef ObFragmentMerge<T, Compare> FragmentMerge;
-public:
-  void run(int64_t idx) final
-  {
-    common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
-    share::ObTenantBase *tenant_base = MTL_CTX();
-    lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
-    lib::Worker::set_compatibility_mode(mode);
-    LOG_INFO("thread init finish");
-    const T *item = NULL; 
-    int ret = common::OB_SUCCESS;
-    while(!ATOMIC_LOAD(&has_set_stop())) {
-      if (OB_FAIL(merge_->get_next_item(item))) {
-        if (common::OB_ITER_END != ret) {
-          STORAGE_LOG(WARN, "fail to get next item", K(ret));
-        } else {
-          queue_->set_finish();
-          STORAGE_LOG(INFO, "merge iter end", K(ret));
-          return;
-        }
-      }
-      if (OB_FAIL(queue_->push(*item))) {
-         LOG_WARN("thread encounter error", K(ret));
-         return;
-      }
-    }
-  }
+// template<typename T, typename Compare>
+// class ObMergeBufferPool : public share::ObThreadPool
+// {
+//   typedef ObMergeItemQueue<T> MergeItemQueue;
+//   typedef ObFragmentMerge<T, Compare> FragmentMerge;
+// public:
+//   void run(int64_t idx) final
+//   {
+//     common::ObTenantStatEstGuard stat_est_guard(MTL_ID());
+//     share::ObTenantBase *tenant_base = MTL_CTX();
+//     lib::Worker::CompatMode mode = ((omt::ObTenant *)tenant_base)->get_compat_mode();
+//     lib::Worker::set_compatibility_mode(mode);
+//     LOG_INFO("thread init finish");
+//     const T *item = NULL; 
+//     int ret = common::OB_SUCCESS;
+//     while(!ATOMIC_LOAD(&has_set_stop())) {
+//       if (OB_FAIL(merge_->get_next_item(item))) {
+//         if (common::OB_ITER_END != ret) {
+//           STORAGE_LOG(WARN, "fail to get next item", K(ret));
+//         } else {
+//           queue_->set_finish();
+//           STORAGE_LOG(INFO, "merge iter end", K(ret));
+//           return;
+//         }
+//       }
+//       if (OB_FAIL(queue_->push(*item))) {
+//          LOG_WARN("thread encounter error", K(ret));
+//          return;
+//       }
+//     }
+//   }
 
-  int init(FragmentMerge *merge, MergeItemQueue *queue)
-  {
-    merge_ = merge;
-    queue_ = queue;
-    return common::OB_SUCCESS;
-  }
-private:
-  FragmentMerge *merge_;
-  MergeItemQueue *queue_;
-};
+//   int init(FragmentMerge *merge, MergeItemQueue *queue)
+//   {
+//     merge_ = merge;
+//     queue_ = queue;
+//     return common::OB_SUCCESS;
+//   }
+// private:
+//   FragmentMerge *merge_;
+//   MergeItemQueue *queue_;
+// };
 
 constexpr int64_t CONCURRENT_NUM = 4;
 template<typename T, typename Compare>
