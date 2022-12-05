@@ -15,8 +15,8 @@ namespace oceanbase
 {
 namespace sql
 {
-#define READ_THREAD_NUM 5
-#define WRITE_THREAD_NUM 7
+#define READ_THREAD_NUM 3
+#define WRITE_THREAD_NUM 5
 
 class ObLoadDataBuffer
 {
@@ -268,6 +268,7 @@ public:
   int finish();
 
   bool is_sort[WRITE_PARALLEL_DEGREE];
+  int64_t write_num[WRITE_PARALLEL_DEGREE];
   ObLoadExternalSort external_sort_;
   ObLoadSSTableWriter sstable_writer_;
   ObLoadDatumRowQueue *datum_row_queue;

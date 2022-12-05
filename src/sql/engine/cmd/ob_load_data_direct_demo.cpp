@@ -1422,6 +1422,7 @@ int ObWriteThreadPool::init(ObLoadDataStmt &load_stmt, ObLoadDatumRowQueue *queu
 
   for (int i = 0; OB_SUCC(ret) && i < WRITE_PARALLEL_DEGREE; ++i) {
     is_sort[i] = false;
+    write_num[i] = 0;
     // init external_sort_
     // if (OB_FAIL(external_sort_[i].init(table_schema, MEM_BUFFER_SIZE / WRITE_PARALLEL_DEGREE, FILE_BUFFER_SIZE))) {
     //   LOG_WARN("fail to init row caster", KR(ret));
@@ -1462,6 +1463,7 @@ void ObWriteThreadPool::run(int64_t idx)
       LOG_WARN("fail to append row", KR(ret));
     }
     datum_row_queue->free(idx, datum_row);
+    ++write_num[idx];
     ++sort_num;
     // _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   }
@@ -1495,6 +1497,18 @@ void ObWriteThreadPool::run(int64_t idx)
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
     while (is_sort[i] == false) {
       PAUSE();
+    }
+  }
+  // check divide is balance
+  {
+    int64_t max_num = -1, min_num = 1000000000;
+    for (int i = 0; i < WRITE_PARALLEL_DEGREE; ++i) {
+      max_num = max(max_num, write_num[i]);
+      min_num = min(min_num, write_num[i]);
+    }
+    double r = max_num / min_num;
+    if (r > 1.5) {
+      throw;
     }
   }
   _LOG_INFO("ObWriteThreadPool thread %ld all thread finish append_row_parallel", idx);
