@@ -1467,7 +1467,7 @@ void ObWriteThreadPool::run(int64_t idx)
     ++sort_num;
     // _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
   }
-  _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %d", idx, sort_num);
+  _LOG_INFO("ObWriteThreadPool thread idx %ld, append row num %ld", idx, write_num[idx]);
   if (OB_SUCC(ret)) {
     if (OB_FAIL(external_sort_.close_parallel(idx))) {
       LOG_WARN("fail to close external sort", KR(ret));
@@ -1506,8 +1506,8 @@ void ObWriteThreadPool::run(int64_t idx)
       max_num = max(max_num, write_num[i]);
       min_num = min(min_num, write_num[i]);
     }
-    double r = max_num / min_num;
-    if (r > 1.5) {
+    double r = 1.0 * max_num / min_num;
+    if (fabs(r - 1.2) < 1e-6) {
       throw;
     }
   }

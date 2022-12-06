@@ -215,7 +215,7 @@ class ObLoadDatumRowQueue
 {
   static const int64_t TOTAL_SIZE = 3LL * (1 << 30);
   static const int64_t MY_PAGE_SIZE = 64 * (1 << 10);
-  static const int64_t QUEUE_MAX_SIZE = (1 << 20);
+  static const int64_t QUEUE_MAX_SIZE = (1 << 22);
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
