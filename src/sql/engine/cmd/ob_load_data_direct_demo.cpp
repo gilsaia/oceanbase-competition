@@ -1127,10 +1127,11 @@ int ObLoadDataDirectDemo::do_load()
 void ObLoadDatumRowQueue::init()
 {
   for (int i = 0; i < WRITE_PARALLEL_DEGREE; i++) {
-    queue_[i].init(1 << 18);
-    allocators_[i].init(TOTAL_SIZE / WRITE_PARALLEL_DEGREE, TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 
-                      MY_PAGE_SIZE);
+    queue_[i].init(QUEUE_CAPACITY);
+    allocators_[i].init(QUEUE_ALLOCATOR_TOTAL_SIZE / WRITE_PARALLEL_DEGREE, 0, 
+                      QUEUE_ALLOCATOR_PAGE_SIZE);
     is_ready[i] = false;
+    allocators_[i].set_tenant_id(MTL_ID());
     is_finish[i] = 0;
   }
 }
@@ -1373,10 +1374,10 @@ int ObReadThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *queue)
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
   const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list =
     load_stmt.get_field_or_var_list();
+  allocator_.set_tenant_id(MTL_ID());
   if (OB_FAIL(init_file_offset(load_args.full_file_path_))) {
     LOG_WARN("fail to init file offset", KR(ret));
   }
-
   for (int i = 0; OB_SUCC(ret) && i < READ_PARALLEL_DEGREE; ++i) {
     is_finish[i] = false;
     // init csv_parser_
@@ -1467,6 +1468,46 @@ int ObReadThreadPool::finish()
  * ObCastThreadPool
 */
 
+int ObCastThreadPool::random_sampling(const int fd, const int64_t file_size, char *buf) 
+{
+  int ret = OB_SUCCESS;
+  int64_t pos = 0;
+  int64_t read_size = 256;
+  int64_t offset = file_size / SAMPLING_NUM;
+  for (int i = 0; OB_SUCC(ret) && i < SAMPLING_NUM; ++i) {
+    if (i != 0) {
+      pos += offset;
+    }
+    lseek(fd, pos, SEEK_SET);
+    if (read_size != read(fd, buf, read_size)){
+      ret = OB_ERR_UNEXPECTED; 
+    }
+    int temp_pos = 0;
+    while (temp_pos < read_size && buf[temp_pos] != '\n') {
+      ++temp_pos;
+    }
+    ++temp_pos;
+    int flag = 0;
+    int64_t key = 0;
+    while (temp_pos < read_size) {
+      if (buf[temp_pos] >= '0' && buf[temp_pos] <= '9') {
+        key = key * 10 + buf[temp_pos] - '0';
+      }
+      if (buf[temp_pos] == '|') {
+        flag = 1;
+        break;
+      }
+      ++temp_pos;
+    }
+    if (!flag) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("no find, read size is small", K(read_size));
+    }
+    max_key_ = max(max_key_, key);
+  }
+  return ret;
+}
+
 int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue)
 {
   int ret=OB_SUCCESS;
@@ -1498,10 +1539,32 @@ int ObCastThreadPool::init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue
       }
     }
   }
-  int64_t max_key = 300000000;
-  pviot_ = max_key / WRITE_PARALLEL_DEGREE;
-  read_row_queue_=read_queue;
-  datum_row_queue_=load_queue;
+  const ObString &filepath = load_args.full_file_path_;
+  int64_t size = 0;
+  int64_t read_size = 256;
+  int fd = -1;
+  char *buf;
+  // open file
+  allocator_.set_tenant_id(MTL_ID());
+  if(-1 == (fd = open(filepath.ptr(), O_RDONLY, 0777))){
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("fail to open file", K(filepath), K(fd));
+  } else if(NULL == (buf = static_cast<char *>(allocator_.alloc(read_size)))){
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+    LOG_WARN("fail to allocator memory", K(size), K(ret));
+  }
+  if (ret != OB_SUCCESS) {
+    return ret;
+  }
+  // calc offset
+  size = common::get_file_size(fd);
+  max_key_ = 0;
+  random_sampling(fd, size, buf);
+  _LOG_INFO("ObCastThreadPool max key %ld", max_key_);
+  close(fd); 
+  pviot_ = max_key_ / WRITE_PARALLEL_DEGREE;
+  read_row_queue_= read_queue;
+  datum_row_queue_= load_queue;
 
   return ret;
 }

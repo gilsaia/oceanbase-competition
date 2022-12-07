@@ -218,11 +218,12 @@ private:
 
 class ObLoadDatumRowQueue 
 {
-  static const int64_t TOTAL_SIZE = 1 * (1 << 30);
-  static const int64_t MY_PAGE_SIZE = 2 * (1 << 20);
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
+  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE = 1 * (1LL << 30);
+  static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE = 4 * (1LL << 10);
+  static const int64_t QUEUE_CAPACITY = (1LL << 20);
 public:
   void init();
   void push(const int idx, const ObLoadDatumRow *data);
@@ -239,9 +240,9 @@ public:
 class ObReadRowQueue
 {
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
-  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE=(1LL << 28); // 256M
-  static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE=(2LL<<20); // 2M
-  static const int64_t QUEUE_CAPACITY=(1LL<<15);
+  static const int64_t QUEUE_ALLOCATOR_TOTAL_SIZE = (1LL << 28); // 256M
+  static const int64_t QUEUE_ALLOCATOR_PAGE_SIZE = 2LL * (1LL << 20); // 2M
+  static const int64_t QUEUE_CAPACITY = (1LL << 20);
 
 public:
   ObReadRowQueue();
@@ -289,7 +290,9 @@ class ObCastThreadPool : public share::ObThreadPool
   static const int64_t READ_PARALLEL_DEGREE = READ_THREAD_NUM;
   static const int64_t CAST_PARALLEL_DEGREE = CAST_THREAD_NUM;
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
+  static const int64_t SAMPLING_NUM = 1000LL;
 public:
+  int random_sampling(const int fd, const int64_t file_size, char *buf);
   int init(ObLoadDataStmt &load_stmt, ObReadRowQueue *read_queue,ObLoadDatumRowQueue *load_queue);
   void run(int64_t idx) final;
   int finish();
@@ -298,7 +301,9 @@ private:
   bool is_finish[CAST_PARALLEL_DEGREE];
   ObReadRowQueue *read_row_queue_;
   ObLoadDatumRowQueue *datum_row_queue_;
+  common::ObArenaAllocator allocator_;
   int64_t pviot_;
+  int64_t max_key_;
 };
 
 class ObWriteThreadPool : public share::ObThreadPool
