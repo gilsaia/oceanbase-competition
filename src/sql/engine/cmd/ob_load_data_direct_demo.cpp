@@ -624,18 +624,34 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
     LOG_WARN("invalid args", KR(ret), KP(table_schema));
   } else {
     for (int i = 0; i < EXTERNAL_PARALLEL_DEGREE; ++i) {
-      allocator_[i].set_tenant_id(MTL_ID());
+     
       const int64_t rowkey_column_num = table_schema->get_rowkey_column_num();
       ObArray<ObColDesc> multi_version_column_descs;
       if (OB_FAIL(table_schema->get_multi_version_column_descs(multi_version_column_descs))) {
         LOG_WARN("fail to get multi version column descs", KR(ret));
-      } else if (OB_FAIL(datum_utils_[i].init(multi_version_column_descs, rowkey_column_num,
-                                          is_oracle_mode(), allocator_[i]))) {
-        LOG_WARN("fail to init datum utils", KR(ret));
-      } else if (OB_FAIL(compare_[i].init(rowkey_column_num, &datum_utils_[i]))) {
-        LOG_WARN("fail to init compare", KR(ret));
-      } else if (OB_FAIL(external_sorts_[i].init(mem_size, file_buf_size, 0, MTL_ID(), &compare_[i]))) {
-        LOG_WARN("fail to init external sort", KR(ret));
+      } else {
+        for (int j = 0; j < CONCURRENT_NUM; j++) {
+           allocator_[i][j].set_tenant_id(MTL_ID());
+          if (OB_FAIL(datum_utils_[i][j].init(multi_version_column_descs, rowkey_column_num,
+                                              is_oracle_mode(), allocator_[i][j]))) {
+            LOG_WARN("fail to init datum utils", KR(ret));
+          } else if (OB_FAIL(compare_[i][j].init(rowkey_column_num, &datum_utils_[i][j]))) {
+            LOG_WARN("fail to init compare", KR(ret));
+          }
+        }
+        if (OB_FAIL(external_sorts_[i].init(mem_size, file_buf_size, 0, MTL_ID(), &compare_[i][0]))) {
+          LOG_WARN("fail to init external sort", KR(ret));
+        }
+      }
+      // else if (OB_FAIL(datum_utils_[i].init(multi_version_column_descs, rowkey_column_num,
+      //                                     is_oracle_mode(), allocator_[i]))) {
+      //   LOG_WARN("fail to init datum utils", KR(ret));
+      // } else if (OB_FAIL(compare_[i].init(rowkey_column_num, &datum_utils_[i]))) {
+      //   LOG_WARN("fail to init compare", KR(ret));
+      // } else if (OB_FAIL(external_sorts_[i].init(mem_size, file_buf_size, 0, MTL_ID(), &compare_[i]))) {
+      //   LOG_WARN("fail to init external sort", KR(ret));
+
+
       // } else {
       //   for(int64_t i=0;i<EXTERNAL_PARALLEL_DEGREE;++i){
       //     if(OB_FAIL(external_sorts_[i].init(mem_size,file_buf_size,0,MTL_ID(),&compare_))){
@@ -643,7 +659,7 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
       //       return ret;
       //     }
       //   }
-      }
+      
     }
   }
   MEMSET(is_closed_, 0, sizeof(is_closed_));
@@ -1297,9 +1313,9 @@ int ObReadRowQueue::copy_row(const int idx,const common::ObNewRow *&row)
 {
   int ret=OB_SUCCESS;
   common::ObNewRow *new_row=nullptr;
-  int64_t buf_size=sizeof(common::ObNewRow);
-  const int64_t item_size=buf_size+row->get_deep_copy_size();
-  char *buf=nullptr;
+  int64_t buf_size = sizeof(common::ObNewRow);
+  const int64_t item_size=buf_size + row->get_deep_copy_size();
+  char *buf = nullptr;
   while(OB_ISNULL(buf = static_cast<char *>(allocators_[idx].alloc(item_size)))){
     PAUSE();
   }

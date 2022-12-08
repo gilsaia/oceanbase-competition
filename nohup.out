@@ -1,0 +1,36 @@
+perf record
+[ perf record: Woken up 159 times to write data ]
+[ perf record: Captured and wrote 4.772 MB perf.data (32002 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 23657 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
+perf record
+Reading /proc/26714/task/26714/maps time out. You may want to increase the time limit by --proc-map-timeout
+[ perf record: Woken up 197 times to write data ]
+Warning:
+1 map information files for pre-existing threads were
+not processed, if there are samples for addresses they
+will not be resolved, you may find out which are these
+threads by running with -v and redirecting the output
+to a file.
+The time limit to process proc map is too short?
+Increase it by --proc-map-timeout
+[ perf record: Captured and wrote 7.115 MB perf.data (53531 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 27928 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
+perf record
+[ perf record: Woken up 198 times to write data ]
+[ perf record: Captured and wrote 4.576 MB perf.data (30438 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 31813 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
+perf record
+[ perf record: Woken up 204 times to write data ]
+[ perf record: Captured and wrote 3.439 MB perf.data (20555 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 26031 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
+sudo: timed out reading password
+perf record
+[ perf record: Woken up 66 times to write data ]
+[ perf record: Captured and wrote 2.384 MB perf.data (13477 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 19379 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
+sudo: timed out reading password
+sudo: timed out reading password
+perf record
+[ perf record: Woken up 190 times to write data ]
+[ perf record: Captured and wrote 0.928 MB perf.data (1175 samples) ]
+script/utils/perf_run_nostop.sh: line 10: 14754 Terminated              sudo perf record -F 99 -g -p $PID -- sleep 7200
