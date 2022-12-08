@@ -47,7 +47,7 @@ public:
   ~ObLightyQueue() { destroy(); }
   int init(const uint64_t capacity,
            const lib::ObLabel &label = ObModIds::OB_LIGHTY_QUEUE,
-           const uint64_t tenant_id = common::OB_SERVER_TENANT_ID);
+           const uint64_t tenant_id = 1);
   void destroy();
   void reset() { clear(); }
   void clear();
