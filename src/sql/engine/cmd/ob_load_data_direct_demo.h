@@ -17,8 +17,8 @@ namespace oceanbase
 namespace sql
 {
 #define READ_THREAD_NUM 1
-#define CAST_THREAD_NUM 4
-#define WRITE_THREAD_NUM 3
+#define CAST_THREAD_NUM 3
+#define WRITE_THREAD_NUM 4
 
 class ObLoadDataBuffer
 {
@@ -308,7 +308,7 @@ private:
 
 class ObWriteThreadPool : public share::ObThreadPool
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 28); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   static const int64_t WRITE_PARALLEL_DEGREE = WRITE_THREAD_NUM;
 public:
